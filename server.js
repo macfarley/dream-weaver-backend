@@ -6,6 +6,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const logger = require('morgan');
+const helmet = require('helmet');
 
 // Import route controllers
 const authRouter = require('./controllers/auth');
@@ -25,17 +26,26 @@ const app = express();
 // Database Connection
 // ====================
 
-// Connect to MongoDB using the URI from environment variables
-mongoose.connect(process.env.MONGODB_URI);
+// Connect to MongoDB using the URI from environment variables with options
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
-// Log successful connection
 mongoose.connection.on('connected', () => {
   console.log(`Connected to MongoDB database: ${mongoose.connection.name}.`);
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err);
 });
 
 // ====================
 // Middleware
 // ====================
+
+// Use Helmet for basic security headers
+app.use(helmet());
 
 // Enable Cross-Origin Resource Sharing
 app.use(cors());
@@ -48,34 +58,6 @@ app.use(express.urlencoded({ extended: true }));
 
 // Log HTTP requests
 app.use(logger('dev'));
-
-// ====================
-// Idle Timer Middleware
-// ====================
-
-// This timer will shut down the server if no requests are received for 5 minutes
-let idleTimer;
-
-// Function to reset the idle timer
-const resetIdleTimer = () => {
-  // Clear any existing timer
-  if (idleTimer) clearTimeout(idleTimer);
-
-  // Set a new timer for 5 minutes (300,000 ms)
-  idleTimer = setTimeout(() => {
-    console.log('No requests for 5 minutes. Disconnecting from MongoDB and shutting down server.');
-    mongoose.disconnect().then(() => process.exit(0));
-  }, 5 * 60 * 1000);
-};
-
-// Middleware to reset the idle timer on every request
-app.use((req, res, next) => {
-  resetIdleTimer();
-  next();
-});
-
-// Start the idle timer when the server starts
-resetIdleTimer();
 
 // ====================
 // Routes
@@ -91,6 +73,15 @@ app.use('/gotobed', verifyToken, gotobedRouter);
 
 // -------- Admin Routes (Require Login + Admin Role) --------
 app.use('/admin', verifyToken, requireAdmin, adminRouter);
+
+// ====================
+// Error Handling Middleware
+// ====================
+
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
+});
 
 // ====================
 // Start Server
