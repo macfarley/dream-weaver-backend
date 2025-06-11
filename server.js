@@ -1,55 +1,103 @@
-const dotenv = require('dotenv');
-dotenv.config();
+// Load environment variables from .env file
+require('dotenv').config();
+
+// Import dependencies
 const express = require('express');
-const app = express();
 const mongoose = require('mongoose');
 const cors = require('cors');
 const logger = require('morgan');
-const authRoutes = require('./controllers/auth'); // Importing auth routes
-const bedroomRoutes = require('./controllers/bedrooms'); // Importing bedroom routes
-const goToBedRoutes = require('./controllers/goToBed'); // Importing goToBed routes
 
+// Import route controllers
+const authRouter = require('./controllers/auth');
+const adminRouter = require('./controllers/admin');
+const userRouter = require('./controllers/users');
+const bedroomRouter = require('./controllers/bedrooms');
+const gotobedRouter = require('./controllers/goToBed');
+
+// Import middleware
+const verifyToken = require('./middleware/verifyToken');
+const requireAdmin = require('./middleware/requireAdmin');
+
+// Initialize Express app
+const app = express();
+
+// ====================
+// Database Connection
+// ====================
+
+// Connect to MongoDB using the URI from environment variables
 mongoose.connect(process.env.MONGODB_URI);
 
+// Log successful connection
 mongoose.connection.on('connected', () => {
-  console.log(`Connected to MongoDB ${mongoose.connection.name}.`);
+  console.log(`Connected to MongoDB database: ${mongoose.connection.name}.`);
 });
 
-// Middleware that lets the app query from a different domain
+// ====================
+// Middleware
+// ====================
+
+// Enable Cross-Origin Resource Sharing
 app.use(cors());
-// Middleware to parse JSON bodies
+
+// Parse incoming JSON requests
 app.use(express.json());
-// Middleware to parse URL-encoded bodies
-app.use(express.urlencoded({ extended: true }));app.use(logger('dev'));
 
-// Routes go here
-app.use('/auth', authRoutes); // Use the auth routes
-app.use('/bedrooms', bedroomRoutes); // Use the bedroom routes
-app.use('/goToBed', goToBedRoutes); // Use the goToBed routes
+// Parse URL-encoded data
+app.use(express.urlencoded({ extended: true }));
 
-//listening on port
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`The express app is ready on port ${PORT}!`);
-});
-// Disconnect from MongoDB after idle for 5 minutes
+// Log HTTP requests
+app.use(logger('dev'));
+
+// ====================
+// Idle Timer Middleware
+// ====================
+
+// This timer will shut down the server if no requests are received for 5 minutes
 let idleTimer;
 
+// Function to reset the idle timer
 const resetIdleTimer = () => {
+  // Clear any existing timer
   if (idleTimer) clearTimeout(idleTimer);
+
+  // Set a new timer for 5 minutes (300,000 ms)
   idleTimer = setTimeout(() => {
     console.log('No requests for 5 minutes. Disconnecting from MongoDB and shutting down server.');
-    mongoose.disconnect().then(() => {
-      process.exit(0);
-    });
-  }, 5 * 60 * 1000); // 5 minutes
+    mongoose.disconnect().then(() => process.exit(0));
+  }, 5 * 60 * 1000);
 };
 
-// Reset timer on every request
+// Middleware to reset the idle timer on every request
 app.use((req, res, next) => {
   resetIdleTimer();
   next();
 });
 
-// Start the timer initially
+// Start the idle timer when the server starts
 resetIdleTimer();
+
+// ====================
+// Routes
+// ====================
+
+// -------- Public Routes (No Authentication Required) --------
+app.use('/auth', authRouter);
+
+// -------- Protected Routes (Require Login) --------
+app.use('/users', verifyToken, userRouter);
+app.use('/bedrooms', verifyToken, bedroomRouter);
+app.use('/gotobed', verifyToken, gotobedRouter);
+
+// -------- Admin Routes (Require Login + Admin Role) --------
+app.use('/admin', verifyToken, requireAdmin, adminRouter);
+
+// ====================
+// Start Server
+// ====================
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Express app listening on port ${PORT}`);
+});

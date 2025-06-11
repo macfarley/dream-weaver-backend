@@ -1,5 +1,27 @@
 const mongoose = require('mongoose');
 
+const userPreferencesSchema = new mongoose.Schema({
+    useMetric: {
+        type: Boolean,
+        default: false // Default to imperial units
+    },
+    dateFormat: {
+        type: String,
+        enum: ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'],
+        default: 'MM/DD/YYYY' // Default date format
+    },
+    timeFormat: {
+        type: String,
+        enum: ['12-hour', '24-hour'],
+        default: '12-hour' // Default time format
+    },
+    theme: {
+        type: String,
+        enum: ['light', 'dark'],
+        default: 'dark' // Default theme
+    },
+});
+
 const userSchema = new mongoose.Schema({
     username: {
         type: String,
@@ -53,38 +75,21 @@ const userSchema = new mongoose.Schema({
         match: [/.+@.+\..+/, 'Please enter a valid email address']
     },
     hashedPassword: {
+// front end validation will enforce password strength, controller handles hashing
         type: String,
         required: true,
-        minlength: 6
     },
-    preferredTimezone: {
+    userPreferences: {
+        type: userPreferencesSchema,
+        default: null // Default to null if no preferences are set
+    },
+    role: {
         type: String,
-        required: false,
-        enum: [
-            "Pacific/Midway (UTC-11:00)",
-            "America/Adak (UTC-10:00)",
-            "America/Anchorage (UTC-09:00)",
-            "America/Los_Angeles (UTC-08:00)",
-            "America/Denver (UTC-07:00)",
-            "America/Chicago (UTC-06:00)",
-            "America/New_York (UTC-05:00)",
-            "America/Sao_Paulo (UTC-03:00)",
-            "Europe/London (UTC+00:00)",
-            "Europe/Berlin (UTC+01:00)",
-            "Europe/Moscow (UTC+03:00)",
-            "Asia/Dubai (UTC+04:00)",
-            "Asia/Kolkata (UTC+05:30)",
-            "Asia/Hong_Kong (UTC+08:00)",
-            "Asia/Tokyo (UTC+09:00)",
-            "Australia/Sydney (UTC+10:00)",
-            "Pacific/Auckland (UTC+12:00)"
-        ]
+        enum: ['user', 'admin'],
+        default: 'user' // Default role is user
     },
-    prefersImperial: {
-        type: Boolean,
-        required: false,
-        default: false
-    }
 });
 
-module.exports = mongoose.model('User', userSchema);
+
+const User = mongoose.model('User', userSchema);
+module.exports = User;

@@ -2,90 +2,143 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-// Import User model
-const User = require('../models/user'); // Adjust the path as necessary
-// Import the verifyToken middleware to protect routes
-const verifyToken = require('../middleware/verify-token');
+// Import models
+const User = require('../models/User');
+const Bedroom = require('../models/Bedroom');
 
-// Salt rounds for bcrypt
+// Salt rounds for bcrypt hashing
 const saltRounds = 12;
-const signUpExample = {
-  "username": "funkybuttlovin",
-  "firstName": "John",
-  "lastName": "Doe",
-  "dateOfBirth": "2000-01-01",
-  "email": "funky@example.com",
-  "password": "password123"
-}
+
+//test case User body for Postman
+// {
+//   "username": "macfarley",
+//   "firstName": "Mac",
+//   "lastName": "Farley",
+//   "dateOfBirth": "1985-05-15",
+//   "email": "macfarley@example.com",
+//   "password": "adminpassword123",
+//   "userPreferences": {},
+//   "role": "admin"
+// }
 
 //sign up route
-router.post('/sign-up', async (req, res) => {
+router.post('/signup', async (req, res) => {
   try {
-// Check if the user already exists
-    const existingUser = await User.findOne({ username: req.body.username });
+    const { username, firstName, lastName, dateOfBirth, email, password, userPreferences, role } = req.body;
+    // Validate required fields
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: 'Username, email, and password are required.' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ $or: [{ username }, { email }] });
     if (existingUser) {
-      return res.status(409).json({ err: 'User already exists.' });
+      return res.status(409).json({ message: 'Username or email already exists.' });
     }
-// Hash the password
-    const hashedPassword = bcrypt.hashSync(req.body.password, saltRounds);
-// Create a new user
-    const newUser = await User.create({ ...req.body, hashedPassword });
-// Construct the payload
-    const payload = { username: newUser.username, _id: newUser._id };
-// Create the token, attaching the payload
-    const token = jwt.sign({ payload }, process.env.JWT_SECRET);
-// Send back the token
-    res.status(201).json({ token });
-  } catch (err) {
-    res.status(500).json({ err: err.message });
-  }
-});
 
-//sign in route
-router.post('/sign-in', async (req, res) => {
-  try {
-// Check if the request body has the required fields
-    if (!req.body.username || !req.body.password) {
-      return res.status(400).json({ err: 'Username and password are required.' });
-    }
-// Find the user by username
-    const user = await User.findOne({ username: req.body.username });
-    if (!user) {
-      return res.status(401).json({ err: 'Invalid credentials.' });
-    }
-//compare the password
-    const isPasswordCorrect = bcrypt.compareSync(
-      req.body.password, user.hashedPassword
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Create new user
+    const newUser = new User({
+      username,
+      firstName,
+      lastName,
+      dateOfBirth,
+      email,
+      hashedPassword,
+      userPreferences,
+      role
+    });
+
+    await newUser.save();
+
+    // Build JWT payload
+    const payload = { 
+      id: newUser._id, 
+      username: newUser.username, 
+      role: newUser.role 
+    };
+
+    // Generate JWT token
+    const token = jwt.sign(
+      payload,
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
     );
-    if (!isPasswordCorrect) {
-      return res.status(401).json({ err: 'Invalid credentials.' });
-    }
-// Construct the payload
-    const payload = { username: user.username, _id: user._id };
 
-    // Create the token, attaching the payload
-    const token = jwt.sign({ payload }, process.env.JWT_SECRET);
+    // Every user will need a default bedroom, tied to their user ID
+    const defaultBedroom = new Bedroom({
+      ownerId: newUser._id,
+      bedroomName: 'Hotel',
+      // All other fields will use schema defaults
+    });
 
-    // Send the token instead of the message
-    res.status(200).json({ token });
-  } catch (err) {
-    res.status(500).json({ err: err.message });
+    await defaultBedroom.save();
+
+    res.status(201).json({
+      message: 'User registered successfully.',
+      token,
+      user: {
+        id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 });
-//user dashboard route
-// This route is protected and requires a valid token to access
-router.get('/dashboard', verifyToken, async (req, res) => {
-try {
-    // Assuming verifyToken middleware sets req.user with the authenticated user's info
-    const user = req.user;
-    if (user && user.username) {
-        res.json({ message: `you're logged in, ${user.username}. here is your dashboard` });
-    } else {
-        res.redirect('/');
+//login route
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Validate required fields
+    if (!username || !password) {
+      return res.status(400).json({ message: 'Username and password are required.' });
     }
-} catch (err) {
-    res.status(500).json({ err: err.message });
-}
+
+    // Find user by username
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    // Compare password with hashed password
+    const isMatch = await bcrypt.compare(password, user.hashedPassword);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid credentials.' });
+    }
+
+    // Build JWT payload
+    const payload = { 
+      id: user._id, 
+      username: user.username, 
+      role: user.role 
+    };
+
+    // Generate JWT token
+    const token = jwt.sign(
+      payload,
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(200).json({
+      message: 'Login successful.',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
 });
 
 module.exports = router;

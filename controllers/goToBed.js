@@ -1,166 +1,137 @@
+// Import required modules
 const express = require('express');
 const router = express.Router();
-// Import the User model to interact with the users collection
-const User = require('../models/user');
-// Import Bedroom model to interact with the bedrooms collection
-const Bedroom = require('../models/bedroom');
-// Import the verifyToken middleware to protect routes
-const verifyToken = require('../middleware/verify-token');
-const GoToBed = require('../models/goToBed');
+const verifyToken = require('../middleware/verifyToken');
+const SleepData = require('../models/SleepData');
 
-//can only interact with sleep data if logged in
+// Middleware: Protect all routes with token verification
 router.use(verifyToken);
 
-//all routes related to go to bed data
-// GET retrieves all sleep data for the logged-in user
-router.get('/', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-
-    // Find all goToBed entries for the user
-    GoToBed.find({ user: userId })
-        .populate('bedroom', 'name') // Populate bedroom details
-        .sort({ createdAt: -1 }) // Sort by most recent first
-        .then(entries => {
-            res.status(200).json(entries);
-        })
-        .catch(err => {
-            console.error('Error retrieving goToBed entries:', err);
-            res.status(500).json({ error: 'Failed to retrieve goToBed entries' });
+/**
+ * @route   POST /gotobed/new
+ * @desc    Create a new sleep entry for the authenticated user
+ * @access  Protected
+ */
+router.post('/new', async (req, res) => {
+    try {
+        // Create a new SleepData document, associating it with the current user
+        const sleepData = new SleepData({
+            user: req.user._id,
+            ...req.body
         });
+        // Save the new entry to the database
+        const newEntry = await sleepData.save();
+        res.status(201).json(newEntry);
+    } catch (err) {
+        console.error('Error creating SleepData entry:', err);
+        res.status(400).json({ error: 'Failed to create SleepData entry', details: err.message });
+    }
 });
-// POST creates a new date's sleep data
-router.post('/new', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-    const goToBedData = req.body;
 
-    // Create the new entry
-    // Combine the user ID with the incoming goToBed data
-    const newGoToBedEntry = {
-        user: userId,
-        ...goToBedData
-    };
-
-    // Create the new GoToBed entry in the database
-    GoToBed.create(newGoToBedEntry)
-        .then(newEntry => {
-            // Successfully created the entry, send it back to the client
-            res.status(201).json(newEntry);
-        })
-        .catch(err => {
-            // Log the error for debugging
-            console.error('Error creating goToBed entry:', err);
-
-            // Send an error response to the client
-            res.status(400).json({
-                error: 'Failed to create goToBed entry',
-                details: err.message
-            });
-        });
+/**
+ * @route   GET /gotobed/:id
+ * @desc    Retrieve a single sleep entry by ID for the authenticated user
+ * @access  Protected
+ */
+router.get('/:id', async (req, res) => {
+    try {
+        // Find the entry by ID and user, and populate the 'bedroom' field with its name
+        const entry = await SleepData.findOne({ _id: req.params.id, user: req.user._id })
+            .populate('bedroom', 'bedroomName');
+        if (!entry) return res.status(404).json({ error: 'Entry not found' });
+        res.status(200).json(entry);
+    } catch (err) {
+        console.error('Error retrieving SleepData entry:', err);
+        res.status(500).json({ error: 'Failed to retrieve SleepData entry' });
+    }
 });
-// GET a single date sleep data
-router.get('/:id', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-    const entryId = req.params.id; // Get the entry ID from the request parameters
 
-    // Find the specific goToBed entry for the user
-    GoToBed.findOne({ _id: entryId, user: userId })
-        .populate('bedroom', 'name') // Populate bedroom details
-        .then(entry => {
-            if (!entry) {
-                return res.status(404).json({ error: 'Entry not found' });
-            }
-            res.status(200).json(entry);
-        })
-        .catch(err => {
-            console.error('Error retrieving goToBed entry:', err);
-            res.status(500).json({ error: 'Failed to retrieve goToBed entry' });
-        });
-}
-);
-// add a wakeup to an existing goToBed entry
-router.post('/:id/wakeUp', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-    const entryId = req.params.id; // Get the entry ID from the request parameters
-    const wakeUpData = req.body;
-
-    // Find the specific goToBed entry for the user
-    GoToBed.findOneAndUpdate(
-        { _id: entryId, user: userId },
-        { $push: { wakeUps: wakeUpData } }, // Add the new wakeup to the array
-        { new: true } // Return the updated document
-    )
-        .then(updatedEntry => {
-            if (!updatedEntry) {
-                return res.status(404).json({ error: 'Entry not found' });
-            }
-            res.status(200).json(updatedEntry);
-        })
-        .catch(err => {
-            console.error('Error adding wakeup to goToBed entry:', err);
-            res.status(500).json({ error: 'Failed to add wakeup to goToBed entry' });
-        });
+/**
+ * @route   POST /gotobed/:id/wakeup
+ * @desc    Add a wakeUp entry to a specific sleep entry
+ * @access  Protected
+ */
+router.post('/:id/wakeup', async (req, res) => {
+    try {
+        // Push a new wakeUp object into the wakeUps array of the specified entry
+        const updated = await SleepData.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            { $push: { wakeUps: req.body } },
+            { new: true }
+        );
+        if (!updated) return res.status(404).json({ error: 'Entry not found' });
+        res.status(200).json(updated);
+    } catch (err) {
+        console.error('Error adding wakeUp:', err);
+        res.status(500).json({ error: 'Failed to add wakeUp' });
+    }
 });
-//GET the form to edit or delete a goToBed entry
-router.get('/:id/edit', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-    const entryId = req.params.id; // Get the entry ID from the request parameters
 
-    // Find the specific goToBed entry for the user
-    GoToBed.findOne({ _id: entryId, user: userId })
-        .then(entry => {
-            if (!entry) {
-                return res.status(404).json({ error: 'Entry not found' });
-            }
-            res.status(200).json({ entry, message: "Edit form retrieved successfully" });
-        })
-        .catch(err => {
-            console.error('Error retrieving goToBed entry:', err);
-            res.status(500).json({ error: 'Failed to retrieve goToBed entry' });
-        });
-});
-// PUT to save changes to an existing goToBed entry
-router.put('/:id/edit', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-    const entryId = req.params.id; // Get the entry ID from the request parameters
-    const updatedData = req.body;
+/**
+ * @route   PATCH /gotobed/:id/wakeup/:index/backtobed
+ * @desc    Add or update the backToBedAt time for a specific wakeUp entry
+ * @access  Protected
+ */
+router.patch('/:id/wakeup/:index/backtobed', async (req, res) => {
+    try {
+        const { backToBedAt } = req.body;
+        // Find the sleep entry for the user
+        const sleepEntry = await SleepData.findOne({ _id: req.params.id, user: req.user._id });
+        if (!sleepEntry) return res.status(404).json({ error: 'Entry not found' });
 
-    // Find the specific goToBed entry for the user and update it
-    GoToBed.findOneAndUpdate(
-        { _id: entryId, user: userId },
-        { $set: updatedData },
-        { new: true }
-    )
-    .then(updatedEntry => {
-        if (!updatedEntry) {
-            res.status(404).json({ error: 'Entry not found' });
-            return;
+        // Validate the wakeUp index
+        const wakeIndex = parseInt(req.params.index);
+        if (isNaN(wakeIndex) || wakeIndex < 0 || wakeIndex >= sleepEntry.wakeUps.length) {
+            return res.status(400).json({ error: 'Invalid wakeUp index' });
         }
-        res.status(200).json(updatedEntry);
-    })
-    .catch(err => {
-        console.error('Error updating goToBed entry:', err);
-        res.status(500).json({ error: 'Failed to update goToBed entry' });
-    });
+
+        // Update the backToBedAt field for the specified wakeUp
+        sleepEntry.wakeUps[wakeIndex].backToBedAt = backToBedAt;
+        await sleepEntry.save();
+        res.status(200).json(sleepEntry);
+    } catch (err) {
+        console.error('Error adding backToBedAt:', err);
+        res.status(500).json({ error: 'Failed to update wakeUp entry' });
+    }
 });
-// DELETE to remove an existing goToBed entry
-// TODO: require password for delete
-router.delete('/:id/delete', (req, res) => {
-    const userId = req.user._id; // Get the user ID from the verified token
-    const entryId = req.params.id; // Get the entry ID from the request parameters
-    
-    // Find the specific goToBed entry for the user and delete it
-    GoToBed.findOneAndDelete({ _id: entryId, user: userId })
-        .then(deletedEntry => {
-            if (!deletedEntry) {
-                return res.status(404).json({ error: 'Entry not found' });
-            }
-            res.status(200).json({ message: 'Entry deleted successfully', deletedEntry });
-        })
-        .catch(err => {
-            console.error('Error deleting goToBed entry:', err);
-            res.status(500).json({ error: 'Failed to delete goToBed entry' });
-        });
-}
-);
-   
+
+/**
+ * @route   PUT /gotobed/:id/edit
+ * @desc    Update an entire sleep entry
+ * @access  Protected
+ */
+router.put('/:id/edit', async (req, res) => {
+    try {
+        // Update the entry with the provided data
+        const updated = await SleepData.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            { $set: req.body },
+            { new: true }
+        );
+        if (!updated) return res.status(404).json({ error: 'Entry not found' });
+        res.status(200).json(updated);
+    } catch (err) {
+        console.error('Error updating SleepData:', err);
+        res.status(500).json({ error: 'Failed to update entry' });
+    }
+});
+
+/**
+ * @route   DELETE /gotobed/:id/delete
+ * @desc    Delete a sleep entry
+ * @access  Protected
+ */
+router.delete('/:id/delete', async (req, res) => {
+    try {
+        // Delete the entry for the user
+        const deleted = await SleepData.findOneAndDelete({ _id: req.params.id, user: req.user._id });
+        if (!deleted) return res.status(404).json({ error: 'Entry not found' });
+        res.status(200).json({ message: 'Entry deleted successfully', deleted });
+    } catch (err) {
+        console.error('Error deleting SleepData:', err);
+        res.status(500).json({ error: 'Failed to delete entry' });
+    }
+});
+
+// Export the router to be used in the main app
 module.exports = router;
