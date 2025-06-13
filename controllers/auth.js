@@ -2,44 +2,74 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-// Import models
+
+// Models
 const User = require('../models/User');
 const Bedroom = require('../models/Bedroom');
 
-// Salt rounds for bcrypt hashing
+// Config
 const saltRounds = 12;
+const JWT_SECRET = process.env.JWT_SECRET;
+const TOKEN_EXPIRY = '24h';
 
-//test case User body for Postman
-// {
-//   "username": "macfarley",
-//   "firstName": "Mac",
-//   "lastName": "Farley",
-//   "dateOfBirth": "1985-05-15",
-//   "email": "macfarley@example.com",
-//   "password": "adminpassword123",
-//   "userPreferences": {},
-//   "role": "admin"
-// }
+/**
+ * Helper function to check required fields for signup
+ */
+function validateSignupFields(body) {
+  const { username, email, password } = body;
+  if (!username || !email || !password) {
+    return false;
+  }
+  return true;
+}
 
-//sign up route
+/**
+ * Helper function to check required fields for login
+ */
+function validateLoginFields(body) {
+  const { username, password } = body;
+  if (!username || !password) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * POST /auth/signup
+ * Handles user registration
+ */
 router.post('/signup', async (req, res) => {
   try {
-    const { username, firstName, lastName, dateOfBirth, email, password, userPreferences, role } = req.body;
+    // Extract fields from request body
+    const {
+      username,
+      firstName,
+      lastName,
+      dateOfBirth,
+      email,
+      password,
+      userPreferences,
+      role,
+      joinedAt
+    } = req.body;
+
     // Validate required fields
-    if (!username || !email || !password) {
-      return res.status(400).json({ message: 'Username, email, and password are required.' });
+    if (!validateSignupFields(req.body)) {
+      return res.status(400).json({ err: 'Username, email, and password are required.' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ $or: [{ username }, { email }] });
+    // Check if user already exists (by username or email)
+    const existingUser = await User.findOne({
+      $or: [{ username }, { email }]
+    });
     if (existingUser) {
-      return res.status(409).json({ message: 'Username or email already exists.' });
+      return res.status(409).json({ err: 'Username or email already exists.' });
     }
 
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create new user
+    // Create new user document
     const newUser = new User({
       username,
       firstName,
@@ -48,96 +78,81 @@ router.post('/signup', async (req, res) => {
       email,
       hashedPassword,
       userPreferences,
-      role
+      role,
+      joinedAt: joinedAt || new Date()
     });
 
+    // Save user to database
     await newUser.save();
 
-    // Build JWT payload
-    const payload = { 
-      id: newUser._id, 
-      username: newUser.username, 
-      role: newUser.role 
-    };
-
-    // Generate JWT token
-    const token = jwt.sign(
-      payload,
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    // Every user will need a default bedroom, tied to their user ID
+    // Create a default bedroom for the new user
     const defaultBedroom = new Bedroom({
       ownerId: newUser._id,
       bedroomName: 'Hotel',
-      // All other fields will use schema defaults
     });
-
     await defaultBedroom.save();
 
-    res.status(201).json({
-      message: 'User registered successfully.',
-      token,
-      user: {
-        id: newUser._id,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role
-      }
-    });
+    // Prepare JWT payload
+    const payload = {
+      _id: newUser._id,
+      username: newUser.username,
+      role: newUser.role
+    };
+
+    // Generate JWT token
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+
+    // Respond with token
+    res.status(201).json({ token });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    // Log error and respond with server error
+    console.error(error);
+    res.status(500).json({ err: 'Server error during sign-up.' });
   }
 });
-//login route
+
+/**
+ * POST /auth/login
+ * Handles user login
+ */
 router.post('/login', async (req, res) => {
   try {
+    // Extract fields from request body
     const { username, password } = req.body;
 
     // Validate required fields
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Username and password are required.' });
+    if (!validateLoginFields(req.body)) {
+      return res.status(400).json({ err: 'Username and password are required.' });
     }
 
     // Find user by username
     const user = await User.findOne({ username });
     if (!user) {
-      return res.status(404).json({ message: 'User not found.' });
+      return res.status(404).json({ err: 'User not found.' });
     }
 
-    // Compare password with hashed password
+    // Compare provided password with stored hashed password
     const isMatch = await bcrypt.compare(password, user.hashedPassword);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+      return res.status(401).json({ err: 'Invalid credentials.' });
     }
 
-    // Build JWT payload
-    const payload = { 
-      id: user._id, 
-      username: user.username, 
-      role: user.role 
+    // Prepare JWT payload
+    const payload = {
+      _id: user._id,
+      username: user.username,
+      role: user.role
     };
 
     // Generate JWT token
-    const token = jwt.sign(
-      payload,
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 
-    res.status(200).json({
-      message: 'Login successful.',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role
-      }
-    });
+    // Respond with token
+    res.status(200).json({ token });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    // Log error and respond with server error
+    console.error(error);
+    res.status(500).json({ err: 'Server error during login.' });
   }
 });
 

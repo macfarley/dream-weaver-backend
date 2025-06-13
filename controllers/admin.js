@@ -132,21 +132,34 @@ router.put('/users/:id', verifyToken, async (req, res) => {
  * Delete a user (admin only)
  */
 router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
-    try {
-        const userId = req.params.id;
+  try {
+    const userId = req.params.id;
+    const adminPassword = req.headers['x-admin-password'];
 
-        // Delete user by ID
-        const deletedUser = await User.findByIdAndDelete(userId);
-
-        if (!deletedUser) {
-            return res.status(404).json({ error: 'User not found.' });
-        }
-
-        res.status(200).json({ message: 'User deleted successfully.' });
-    } catch (err) {
-        // Handle errors during deletion
-        res.status(500).json({ error: 'Failed to delete user.' });
+    if (!adminPassword) {
+      return res.status(400).json({ error: 'Admin password required for deletion.' });
     }
+
+    const adminUser = await User.findById(req.user.id);
+    if (!adminUser) {
+      return res.status(403).json({ error: 'Admin authentication failed.' });
+    }
+
+    const passwordMatch = await bcrypt.compare(adminPassword, adminUser.hashedPassword);
+    if (!passwordMatch) {
+      return res.status(403).json({ error: 'Incorrect admin password.' });
+    }
+
+    const deletedUser = await User.findByIdAndDelete(userId);
+    if (!deletedUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    res.status(200).json({ message: 'User deleted successfully.' });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ error: 'Failed to delete user.' });
+  }
 });
 
 module.exports = router;

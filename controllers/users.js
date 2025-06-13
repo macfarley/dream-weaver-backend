@@ -29,4 +29,28 @@ router.get('/', (req, res) => {
             res.status(500).json({ error: 'Failed to retrieve SleepData entries' });
         });
 });
+
+// PUT /users/profile
+router.put('/profile', async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
+    const updateData = req.body;
+
+    // Optional: validate preferences here
+    // e.g. if (updateData.preferences) { ... }
+
+    // Update user document, return updated user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).select('-password'); // exclude password from response
+
+    res.json(updatedUser);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error updating profile' });
+  }
+});
+
 module.exports = router;

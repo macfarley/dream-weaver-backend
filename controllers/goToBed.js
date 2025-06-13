@@ -1,137 +1,104 @@
-// Import required modules
 const express = require('express');
 const router = express.Router();
-const verifyToken = require('../middleware/verifyToken');
 const SleepData = require('../models/SleepData');
-
-// Middleware: Protect all routes with token verification
-router.use(verifyToken);
+const verifyToken = require('../middleware/verifyToken');
 
 /**
- * @route   POST /gotobed/new
- * @desc    Create a new sleep entry for the authenticated user
- * @access  Protected
+ * Start a new SleepData entry
+ * Endpoint: POST /gotobed
+ * Requires authentication
  */
-router.post('/new', async (req, res) => {
-    try {
-        // Create a new SleepData document, associating it with the current user
-        const sleepData = new SleepData({
-            user: req.user._id,
-            ...req.body
-        });
-        // Save the new entry to the database
-        const newEntry = await sleepData.save();
-        res.status(201).json(newEntry);
-    } catch (err) {
-        console.error('Error creating SleepData entry:', err);
-        res.status(400).json({ error: 'Failed to create SleepData entry', details: err.message });
+router.post('/', verifyToken, async (req, res) => {
+  try {
+    // Extract relevant fields from request body
+    const { bedroom, cuddleBuddy, sleepyThoughts } = req.body;
+
+    // Check if the user already has an active (unfinished) sleep session
+    const existing = await SleepData.findOne({
+      user: req.user.id,
+      // Look for any wakeUp event that is not finished
+      'wakeUps.finishedSleeping': { $ne: true },
+    });
+
+    if (existing) {
+      // If found, prevent starting a new session
+      return res.status(400).json({ message: 'You already have an active sleep session.' });
     }
+
+    // Create a new SleepData document
+    const newSleep = new SleepData({
+      user: req.user.id,
+      bedroom,
+      cuddleBuddy,
+      sleepyThoughts,
+      wakeUps: [], // No wakeups yet
+      createdAt: new Date(),
+    });
+
+    // Save the new sleep session to the database
+    const saved = await newSleep.save();
+
+    // Respond with the newly created sleep session
+    res.status(201).json(saved);
+  } catch (err) {
+    // Log and handle any errors
+    console.error(err);
+    res.status(500).json({ message: 'Server error while starting sleep session.' });
+  }
 });
 
 /**
- * @route   GET /gotobed/:id
- * @desc    Retrieve a single sleep entry by ID for the authenticated user
- * @access  Protected
+ * Add a wakeup event to the active SleepData entry
+ * Endpoint: POST /gotobed/wakeup
+ * Requires authentication
  */
-router.get('/:id', async (req, res) => {
-    try {
-        // Find the entry by ID and user, and populate the 'bedroom' field with its name
-        const entry = await SleepData.findOne({ _id: req.params.id, user: req.user._id })
-            .populate('bedroom', 'bedroomName');
-        if (!entry) return res.status(404).json({ error: 'Entry not found' });
-        res.status(200).json(entry);
-    } catch (err) {
-        console.error('Error retrieving SleepData entry:', err);
-        res.status(500).json({ error: 'Failed to retrieve SleepData entry' });
+router.post('/wakeup', verifyToken, async (req, res) => {
+  try {
+    // Extract wakeup details from request body
+    const {
+      sleepQuality,
+      dreamJournal,
+      awakenAt,
+      finishedSleeping,
+      backToBedAt,
+    } = req.body;
+
+    // Find the user's most recent active sleep session (not finished)
+    const sleepEntry = await SleepData.findOne({
+      user: req.user.id,
+      'wakeUps.finishedSleeping': { $ne: true },
+    }).sort({ createdAt: -1 });
+
+    if (!sleepEntry) {
+      // If no active session, return error
+      return res.status(404).json({ message: 'No active sleep session found.' });
     }
+
+    // Build the wakeup event object
+    const wakeEvent = {
+      sleepQuality,
+      dreamJournal,
+      // Use provided awakenAt or default to now
+      awakenAt: awakenAt ? new Date(awakenAt) : new Date(),
+      // Ensure finishedSleeping is a boolean
+      finishedSleeping: !!finishedSleeping,
+      // Use provided backToBedAt or null
+      backToBedAt: backToBedAt ? new Date(backToBedAt) : null,
+    };
+
+    // Add the wakeup event to the sleep session
+    sleepEntry.wakeUps.push(wakeEvent);
+
+    // Save the updated sleep session
+    const updated = await sleepEntry.save();
+
+    // Respond with the updated sleep session
+    res.status(200).json(updated);
+  } catch (err) {
+    // Log and handle any errors
+    console.error(err);
+    res.status(500).json({ message: 'Server error while updating wakeup.' });
+  }
 });
 
-/**
- * @route   POST /gotobed/:id/wakeup
- * @desc    Add a wakeUp entry to a specific sleep entry
- * @access  Protected
- */
-router.post('/:id/wakeup', async (req, res) => {
-    try {
-        // Push a new wakeUp object into the wakeUps array of the specified entry
-        const updated = await SleepData.findOneAndUpdate(
-            { _id: req.params.id, user: req.user._id },
-            { $push: { wakeUps: req.body } },
-            { new: true }
-        );
-        if (!updated) return res.status(404).json({ error: 'Entry not found' });
-        res.status(200).json(updated);
-    } catch (err) {
-        console.error('Error adding wakeUp:', err);
-        res.status(500).json({ error: 'Failed to add wakeUp' });
-    }
-});
-
-/**
- * @route   PATCH /gotobed/:id/wakeup/:index/backtobed
- * @desc    Add or update the backToBedAt time for a specific wakeUp entry
- * @access  Protected
- */
-router.patch('/:id/wakeup/:index/backtobed', async (req, res) => {
-    try {
-        const { backToBedAt } = req.body;
-        // Find the sleep entry for the user
-        const sleepEntry = await SleepData.findOne({ _id: req.params.id, user: req.user._id });
-        if (!sleepEntry) return res.status(404).json({ error: 'Entry not found' });
-
-        // Validate the wakeUp index
-        const wakeIndex = parseInt(req.params.index);
-        if (isNaN(wakeIndex) || wakeIndex < 0 || wakeIndex >= sleepEntry.wakeUps.length) {
-            return res.status(400).json({ error: 'Invalid wakeUp index' });
-        }
-
-        // Update the backToBedAt field for the specified wakeUp
-        sleepEntry.wakeUps[wakeIndex].backToBedAt = backToBedAt;
-        await sleepEntry.save();
-        res.status(200).json(sleepEntry);
-    } catch (err) {
-        console.error('Error adding backToBedAt:', err);
-        res.status(500).json({ error: 'Failed to update wakeUp entry' });
-    }
-});
-
-/**
- * @route   PUT /gotobed/:id/edit
- * @desc    Update an entire sleep entry
- * @access  Protected
- */
-router.put('/:id/edit', async (req, res) => {
-    try {
-        // Update the entry with the provided data
-        const updated = await SleepData.findOneAndUpdate(
-            { _id: req.params.id, user: req.user._id },
-            { $set: req.body },
-            { new: true }
-        );
-        if (!updated) return res.status(404).json({ error: 'Entry not found' });
-        res.status(200).json(updated);
-    } catch (err) {
-        console.error('Error updating SleepData:', err);
-        res.status(500).json({ error: 'Failed to update entry' });
-    }
-});
-
-/**
- * @route   DELETE /gotobed/:id/delete
- * @desc    Delete a sleep entry
- * @access  Protected
- */
-router.delete('/:id/delete', async (req, res) => {
-    try {
-        // Delete the entry for the user
-        const deleted = await SleepData.findOneAndDelete({ _id: req.params.id, user: req.user._id });
-        if (!deleted) return res.status(404).json({ error: 'Entry not found' });
-        res.status(200).json({ message: 'Entry deleted successfully', deleted });
-    } catch (err) {
-        console.error('Error deleting SleepData:', err);
-        res.status(500).json({ error: 'Failed to delete entry' });
-    }
-});
-
-// Export the router to be used in the main app
 module.exports = router;
