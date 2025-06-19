@@ -1,5 +1,8 @@
 /**
- * =============================================================================
+ * =========================// Data Models
+const User = require('../models/User');
+const Bedroom = require('../models/Bedroom');
+const SleepData = require('../models/SleepData');==================================================
  * ADMIN CONTROLLER - DreamWeaver Backend
  * =============================================================================
  * 
@@ -395,7 +398,7 @@ router.put('/users/:id', verifyToken, async (req, res) => {
  * =============================================================================
  * DELETE /users/:id
  * =============================================================================
- * Permanently deletes a user from the system (admin only).
+ * Permanently deletes a user and ALL associated data from the system (admin only).
  * 
  * Access Control:
  * - Requires valid JWT token
@@ -408,17 +411,23 @@ router.put('/users/:id', verifyToken, async (req, res) => {
  * Headers:
  * - x-admin-password: Admin's current password for confirmation
  * 
+ * Cascade Deletion Process:
+ * 1. Deletes all bedrooms owned by the user
+ * 2. Deletes all sleep data/sessions for the user
+ * 3. Finally deletes the user document
+ * 
  * Response:
- * - Success: Confirmation message
+ * - Success: Confirmation message with deletion summary
  * - Error: 400 for missing password, 403 for unauthorized/wrong password, 404 for user not found
  * 
  * Security Notes:
  * - Requires admin password confirmation to prevent unauthorized deletions
  * - Admin cannot delete themselves (safety measure)
+ * - Cannot delete other admin users (only users with role "user")
  * - All deletion attempts are logged for audit purposes
- * - Related data should be cleaned up separately (cascade deletes)
+ * - Complete cascade deletion ensures no orphaned data remains
  * 
- * Warning: This operation is irreversible!
+ * Warning: This operation is irreversible and removes ALL user data!
  * =============================================================================
  */
 router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
@@ -481,30 +490,78 @@ router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
       });
     }
 
-    // Perform the deletion
-    const deletedUser = await User.findByIdAndDelete(userId);
-    if (!deletedUser) {
-      return res.status(404).json({ 
+    // Prevent deletion of other admin users (security measure)
+    if (targetUser.role === 'admin' && String(req.user.id) !== String(userId)) {
+      console.warn(`[SECURITY] Admin ${req.user.username} attempted to delete another admin: ${targetUser.username}`);
+      return res.status(403).json({ 
         success: false,
-        error: 'User not found or already deleted.' 
+        error: 'Cannot delete other admin users. Only users with role "user" can be deleted.' 
       });
     }
 
-    // Log successful deletion for audit trail
-    console.log(`[ADMIN] User deleted: ${deletedUser.username} (${deletedUser._id}) by admin ${req.user.username} at ${new Date().toISOString()}`);
+    // =================================================================
+    // CASCADE DELETION - Remove all user-related data
+    // =================================================================
+    console.log(`[ADMIN] Starting cascade deletion for user: ${targetUser.username}`);
+    const deletionResults = {
+      bedrooms: 0,
+      sleepSessions: 0,
+      user: 0
+    };
+
+    // Step 1: Delete all bedrooms owned by this user
+    console.log(`[ADMIN] Deleting bedrooms for user: ${targetUser.username}`);
+    const bedroomDeletion = await Bedroom.deleteMany({ ownerId: userId });
+    deletionResults.bedrooms = bedroomDeletion.deletedCount;
+    console.log(`[ADMIN] Deleted ${deletionResults.bedrooms} bedrooms for user: ${targetUser.username}`);
+
+    // Step 2: Delete all sleep data/sessions for this user
+    console.log(`[ADMIN] Deleting sleep data for user: ${targetUser.username}`);
+    const sleepDataDeletion = await SleepData.deleteMany({ user: userId });
+    deletionResults.sleepSessions = sleepDataDeletion.deletedCount;
+    console.log(`[ADMIN] Deleted ${deletionResults.sleepSessions} sleep sessions for user: ${targetUser.username}`);
+
+    // Step 3: Finally delete the user document
+    console.log(`[ADMIN] Deleting user document: ${targetUser.username}`);
+    const deletedUser = await User.findByIdAndDelete(userId);
+    if (!deletedUser) {
+      // This shouldn't happen since we already found the user, but just in case
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found or already deleted during cascade deletion.' 
+      });
+    }
+    deletionResults.user = 1;
+
+    // Log comprehensive deletion summary for audit trail
+    console.log(`[ADMIN] CASCADE DELETION COMPLETED for user: ${deletedUser.username}`);
+    console.log(`[ADMIN] Deletion Summary:`, {
+      user: deletedUser.username,
+      userId: deletedUser._id,
+      deletedBy: req.user.username,
+      timestamp: new Date().toISOString(),
+      results: deletionResults
+    });
 
     res.status(200).json({ 
       success: true,
-      message: `User '${deletedUser.username}' has been permanently deleted.`,
-      deletedUser: {
-        id: deletedUser._id,
-        username: deletedUser.username,
-        email: deletedUser.email
+      message: `User '${deletedUser.username}' and all associated data have been permanently deleted.`,
+      deletionSummary: {
+        user: {
+          id: deletedUser._id,
+          username: deletedUser.username,
+          email: deletedUser.email
+        },
+        deletedData: {
+          bedrooms: deletionResults.bedrooms,
+          sleepSessions: deletionResults.sleepSessions,
+          totalRecords: deletionResults.bedrooms + deletionResults.sleepSessions + 1
+        }
       }
     });
   } catch (error) {
     // Log detailed error for debugging
-    console.error('[ADMIN] Error deleting user:', {
+    console.error('[ADMIN] ERROR during cascade deletion:', {
       error: error.message,
       stack: error.stack,
       userId: req.params.id,
@@ -512,10 +569,27 @@ router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
+    // Check if this is a partial deletion scenario
+    if (error.message.includes('user not found during cascade')) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found. May have been deleted by another admin.' 
+      });
+    }
+    
+    // For any database errors during cascade deletion
+    if (error.name === 'MongoError' || error.name === 'MongooseError') {
+      console.error('[ADMIN] Database error during cascade deletion - manual cleanup may be required');
+      return res.status(500).json({ 
+        success: false,
+        error: 'Database error during deletion. Some data may require manual cleanup.' 
+      });
+    }
+    
     // Return generic error message for security
     res.status(500).json({ 
       success: false,
-      error: 'Failed to delete user. Please try again later.' 
+      error: 'Failed to delete user and associated data. Please try again later.' 
     });
   }
 });
