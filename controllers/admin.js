@@ -1,165 +1,531 @@
+/**
+ * =============================================================================
+ * ADMIN CONTROLLER - DreamWeaver Backend
+ * =============================================================================
+ * 
+ * This controller handles administrative operations for user management.
+ * All routes require proper authentication and most require admin privileges.
+ * 
+ * Key Features:
+ * - User listing and retrieval (admin only)
+ * - User profile updates (admin or self)
+ * - Secure user deletion with password confirmation
+ * - Input validation and sanitization
+ * - Comprehensive error handling and logging
+ * 
+ * Security Considerations:
+ * - All routes require valid JWT authentication
+ * - Admin routes require additional role verification
+ * - Password updates use bcrypt with salt rounds
+ * - User deletion requires admin password confirmation
+ * - Email uniqueness validation
+ * - Sensitive data exclusion from responses
+ * 
+ * @author DreamWeaver Development Team
+ * @version 1.0.0
+ * =============================================================================
+ */
+
+// Core Express framework for routing
 const express = require('express');
 const router = express.Router();
+
+// Data models
 const User = require('../models/User');
-const bcrypt = require('bcrypt');
-const verifyToken = require('../middleware/verifyToken');
-const requireAdmin = require('../middleware/requireAdmin');
+
+// Security and authentication utilities
+const bcrypt = require('bcrypt'); // For password hashing and comparison
+const verifyToken = require('../middleware/verifyToken'); // JWT verification
+const requireAdmin = require('../middleware/requireAdmin'); // Admin role check
 
 /**
+ * =============================================================================
  * GET /users
- * Get all users (admin only)
+ * =============================================================================
+ * Retrieves a list of all users in the system (admin only).
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Requires admin role
+ * 
+ * Response:
+ * - Success: Array of user objects (passwords excluded)
+ * - Error: 403 for non-admin users, 500 for server errors
+ * 
+ * Security Notes:
+ * - Passwords are explicitly excluded from the response
+ * - Admin access is logged for audit purposes
+ * =============================================================================
  */
 router.get('/users', verifyToken, requireAdmin, async (req, res) => {
     try {
-        // Fetch all users, excluding the hashedPassword field
+        console.log(`[ADMIN] User list requested by admin: ${req.user.username} (${req.user.id})`);
+        
+        // Fetch all users from database, explicitly excluding sensitive password field
         const users = await User.find({}, '-hashedPassword');
-        res.status(200).json(users);
-    } catch (err) {
-        // Handle errors during fetching
-        res.status(500).json({ error: 'Failed to fetch users.' });
+        
+        // Log successful admin operation for audit trail
+        console.log(`[ADMIN] Successfully retrieved ${users.length} users for admin: ${req.user.username}`);
+        
+        // Return user list with success status
+        res.status(200).json({
+            success: true,
+            count: users.length,
+            data: users
+        });
+    } catch (error) {
+        // Log detailed error for debugging while providing generic message to client
+        console.error('[ADMIN] Error fetching users:', {
+            error: error.message,
+            stack: error.stack,
+            adminUser: req.user.username,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Return generic error message to prevent information leakage
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch users. Please try again later.' 
+        });
     }
 });
 
 /**
+ * =============================================================================
  * GET /users/:id
- * Get a user by ID (admin or self)
+ * =============================================================================
+ * Retrieves a specific user by their ID.
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Accessible by: Admin users OR the user themselves (self-access)
+ * 
+ * Parameters:
+ * - id: MongoDB ObjectId of the target user
+ * 
+ * Response:
+ * - Success: User object (password excluded)
+ * - Error: 403 for unauthorized access, 404 for user not found, 500 for server errors
+ * 
+ * Security Notes:
+ * - User can only access their own data unless they're an admin
+ * - Passwords are explicitly excluded from the response
+ * - Access attempts are logged for security monitoring
+ * =============================================================================
  */
 router.get('/users/:id', verifyToken, async (req, res) => {
     try {
         const userId = req.params.id;
+        
+        // Validate the provided user ID format
+        if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Invalid user ID format.' 
+            });
+        }
 
-        // Only allow if user is admin or accessing their own data
+        // Determine access permissions
         const isAdmin = req.user.role === 'admin';
         const isSelf = req.user.id === userId;
+        
+        // Enforce access control - only admin or self can access
         if (!isAdmin && !isSelf) {
-            return res.status(403).json({ error: 'Access denied.' });
+            console.warn(`[SECURITY] Unauthorized user access attempt: ${req.user.username} tried to access user ${userId}`);
+            return res.status(403).json({ 
+                success: false,
+                error: 'Access denied. You can only access your own profile.' 
+            });
         }
 
-        // Find user by ID, exclude hashedPassword
+        // Find user by ID, exclude sensitive password field
         const user = await User.findById(userId, '-hashedPassword');
         if (!user) {
-            return res.status(404).json({ error: 'User not found.' });
+            console.warn(`[ADMIN] User not found: ${userId} requested by ${req.user.username}`);
+            return res.status(404).json({ 
+                success: false,
+                error: 'User not found.' 
+            });
         }
 
-        res.status(200).json(user);
-    } catch (err) {
-        // Handle errors during fetching
-        res.status(500).json({ error: 'Failed to fetch user.' });
+        // Log successful access for audit purposes
+        console.log(`[ADMIN] User profile accessed: ${user.username} by ${req.user.username} (${isAdmin ? 'admin' : 'self'})`);
+
+        res.status(200).json({
+            success: true,
+            data: user
+        });
+    } catch (error) {
+        // Log detailed error for debugging
+        console.error('[ADMIN] Error fetching user:', {
+            error: error.message,
+            userId: req.params.id,
+            requestingUser: req.user.username,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Return generic error message
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch user. Please try again later.' 
+        });
     }
 });
 
 /**
+ * =============================================================================
  * PUT /users/:id
- * Update a user (admin or self)
+ * =============================================================================
+ * Updates a user's profile information.
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Accessible by: Admin users OR the user themselves (self-update)
+ * 
+ * Parameters:
+ * - id: MongoDB ObjectId of the target user
+ * 
+ * Request Body (all optional):
+ * - email: String - new email address (must be unique)
+ * - password: String - new password (min 6 characters)
+ * - firstName: String - user's first name
+ * - lastName: String - user's last name
+ * - dateOfBirth: Date - user's date of birth
+ * - userPreferences: Object - user preference settings
+ * 
+ * Protected Fields:
+ * - username: Cannot be changed after account creation
+ * - role: Cannot be changed via this endpoint (security measure)
+ * 
+ * Response:
+ * - Success: Updated user object (password excluded)
+ * - Error: 400 for validation errors, 403 for unauthorized access, 404 for user not found
+ * 
+ * Security Notes:
+ * - Email uniqueness is validated across all users
+ * - Passwords are hashed using bcrypt with salt
+ * - Input validation prevents injection attacks
+ * - Role and username changes are explicitly blocked
+ * =============================================================================
  */
 router.put('/users/:id', verifyToken, async (req, res) => {
   try {
     const userId = req.params.id;
 
+    // Validate the provided user ID format
+    if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid user ID format.' 
+      });
+    }
+
+    // Determine access permissions
     const isAdmin = req.user.role === 'admin';
     const isSelf = String(req.user.id) === String(userId);
 
+    // Enforce access control - only admin or self can update
     if (!isAdmin && !isSelf) {
-      return res.status(403).json({ error: 'Access denied.' });
+      console.warn(`[SECURITY] Unauthorized user update attempt: ${req.user.username} tried to update user ${userId}`);
+      return res.status(403).json({ 
+        success: false,
+        error: 'Access denied. You can only update your own profile.' 
+      });
     }
 
+    // Extract and validate input fields
     const { email, password, firstName, lastName, dateOfBirth, userPreferences } = req.body;
     const updateData = {};
 
-    // Validate and assign allowed fields
-    if (email) {
-    if (typeof email !== 'string' || !email.match(/^[^@]+@[^@]+\.[^@]+$/)) {
-        return res.status(400).json({ error: 'Invalid email format.' });
-    }
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser && String(existingUser._id) !== String(userId)) {
-        return res.status(400).json({ error: 'Email is already in use by another account.' });
-    }
-    updateData.email = email.toLowerCase();
+    // Validate and process email update
+    if (email !== undefined) {
+      // Ensure email is a string and has basic email format
+      if (typeof email !== 'string' || !email.match(/^[^@]+@[^@]+\.[^@]+$/)) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid email format. Please provide a valid email address.' 
+        });
+      }
+      
+      // Check for email uniqueness (case-insensitive)
+      const normalizedEmail = email.toLowerCase();
+      const existingUser = await User.findOne({ email: normalizedEmail });
+      if (existingUser && String(existingUser._id) !== String(userId)) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Email is already in use by another account.' 
+        });
+      }
+      updateData.email = normalizedEmail;
     }
 
+    // Validate and process name fields
+    if (firstName !== undefined) {
+      if (typeof firstName !== 'string' || firstName.trim().length === 0) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'First name must be a non-empty string.' 
+        });
+      }
+      updateData.firstName = firstName.trim();
+    }
 
-    if (firstName) updateData.firstName = firstName;
-    if (lastName) updateData.lastName = lastName;
+    if (lastName !== undefined) {
+      if (typeof lastName !== 'string' || lastName.trim().length === 0) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Last name must be a non-empty string.' 
+        });
+      }
+      updateData.lastName = lastName.trim();
+    }
 
-    if (dateOfBirth) {
+    // Validate and process date of birth
+    if (dateOfBirth !== undefined) {
       const dob = new Date(dateOfBirth);
       if (isNaN(dob.getTime())) {
-        return res.status(400).json({ error: 'Invalid date of birth.' });
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid date of birth format. Please use a valid date.' 
+        });
       }
+      
+      // Check if date is not in the future
+      if (dob > new Date()) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Date of birth cannot be in the future.' 
+        });
+      }
+      
       updateData.dateOfBirth = dob;
     }
 
-    if (userPreferences) {
-      if (typeof userPreferences !== 'object') {
-        return res.status(400).json({ error: 'Invalid user preferences.' });
+    // Validate and process user preferences
+    if (userPreferences !== undefined) {
+      if (typeof userPreferences !== 'object' || userPreferences === null) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'User preferences must be a valid object.' 
+        });
       }
       updateData.userPreferences = userPreferences;
     }
 
-    if (password) {
+    // Validate and process password update
+    if (password !== undefined) {
+      // Ensure password meets minimum security requirements
       if (typeof password !== 'string' || password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+        return res.status(400).json({ 
+          success: false,
+          error: 'Password must be at least 6 characters long.' 
+        });
       }
-      const salt = await bcrypt.genSalt(10);
+      
+      // Hash the new password with salt for security
+      const saltRounds = 10; // Standard salt rounds for bcrypt
+      const salt = await bcrypt.genSalt(saltRounds);
       updateData.hashedPassword = await bcrypt.hash(password, salt);
+      
+      console.log(`[ADMIN] Password updated for user: ${userId} by ${req.user.username}`);
     }
 
-    // Prevent role or username changes
+    // Security check: Prevent role or username changes via this endpoint
     if ('role' in req.body || 'username' in req.body) {
-      return res.status(400).json({ error: 'Username and role cannot be changed.' });
+      console.warn(`[SECURITY] Attempt to change protected field by ${req.user.username} for user ${userId}`);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Username and role cannot be changed through this endpoint.' 
+      });
     }
 
+    // Perform the database update with validation
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       updateData,
-      { new: true, runValidators: true }
-    ).select('-hashedPassword');
+      { 
+        new: true,           // Return the updated document
+        runValidators: true  // Run mongoose schema validations
+      }
+    ).select('-hashedPassword'); // Exclude password from response
 
+    // Check if user was found and updated
     if (!updatedUser) {
-      return res.status(404).json({ error: 'User not found.' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found.' 
+      });
     }
 
-    res.status(200).json(updatedUser);
-  } catch (err) {
-    console.error('Error updating user:', err);
-    res.status(500).json({ error: 'Failed to update user.' });
+    // Log successful update for audit purposes
+    console.log(`[ADMIN] User updated successfully: ${updatedUser.username} by ${req.user.username}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'User updated successfully.',
+      data: updatedUser
+    });
+  } catch (error) {
+    // Log detailed error for debugging
+    console.error('[ADMIN] Error updating user:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.params.id,
+      requestingUser: req.user.username,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Handle specific MongoDB errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Validation failed. Please check your input data.' 
+      });
+    }
+    
+    // Return generic error message for security
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to update user. Please try again later.' 
+    });
   }
 });
 
 /**
+ * =============================================================================
  * DELETE /users/:id
- * Delete a user (admin only)
+ * =============================================================================
+ * Permanently deletes a user from the system (admin only).
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Requires admin role
+ * - Requires admin password confirmation for additional security
+ * 
+ * Parameters:
+ * - id: MongoDB ObjectId of the target user
+ * 
+ * Headers:
+ * - x-admin-password: Admin's current password for confirmation
+ * 
+ * Response:
+ * - Success: Confirmation message
+ * - Error: 400 for missing password, 403 for unauthorized/wrong password, 404 for user not found
+ * 
+ * Security Notes:
+ * - Requires admin password confirmation to prevent unauthorized deletions
+ * - Admin cannot delete themselves (safety measure)
+ * - All deletion attempts are logged for audit purposes
+ * - Related data should be cleaned up separately (cascade deletes)
+ * 
+ * Warning: This operation is irreversible!
+ * =============================================================================
  */
 router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
     const adminPassword = req.headers['x-admin-password'];
 
-    if (!adminPassword) {
-      return res.status(400).json({ error: 'Admin password required for deletion.' });
+    // Validate the provided user ID format
+    if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid user ID format.' 
+      });
     }
 
+    // Require admin password for deletion confirmation
+    if (!adminPassword) {
+      console.warn(`[SECURITY] User deletion attempted without admin password by ${req.user.username}`);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Admin password required for user deletion confirmation.' 
+      });
+    }
+
+    // Prevent admin from deleting themselves (safety measure)
+    if (String(req.user.id) === String(userId)) {
+      console.warn(`[SECURITY] Admin ${req.user.username} attempted to delete their own account`);
+      return res.status(400).json({ 
+        success: false,
+        error: 'You cannot delete your own admin account.' 
+      });
+    }
+
+    // Verify admin's current password for additional security
     const adminUser = await User.findById(req.user.id);
     if (!adminUser) {
-      return res.status(403).json({ error: 'Admin authentication failed.' });
+      console.error(`[SECURITY] Admin user not found during deletion: ${req.user.id}`);
+      return res.status(403).json({ 
+        success: false,
+        error: 'Admin authentication failed.' 
+      });
     }
 
+    // Compare provided password with stored hash
     const passwordMatch = await bcrypt.compare(adminPassword, adminUser.hashedPassword);
     if (!passwordMatch) {
-      return res.status(403).json({ error: 'Incorrect admin password.' });
+      console.warn(`[SECURITY] Incorrect admin password for deletion by ${req.user.username}`);
+      return res.status(403).json({ 
+        success: false,
+        error: 'Incorrect admin password. Deletion cancelled.' 
+      });
     }
 
+    // Find the user to be deleted for logging purposes
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found.' 
+      });
+    }
+
+    // Perform the deletion
     const deletedUser = await User.findByIdAndDelete(userId);
     if (!deletedUser) {
-      return res.status(404).json({ error: 'User not found.' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found or already deleted.' 
+      });
     }
 
-    res.status(200).json({ message: 'User deleted successfully.' });
-  } catch (err) {
-    console.error('Delete error:', err);
-    res.status(500).json({ error: 'Failed to delete user.' });
+    // Log successful deletion for audit trail
+    console.log(`[ADMIN] User deleted: ${deletedUser.username} (${deletedUser._id}) by admin ${req.user.username} at ${new Date().toISOString()}`);
+
+    res.status(200).json({ 
+      success: true,
+      message: `User '${deletedUser.username}' has been permanently deleted.`,
+      deletedUser: {
+        id: deletedUser._id,
+        username: deletedUser.username,
+        email: deletedUser.email
+      }
+    });
+  } catch (error) {
+    // Log detailed error for debugging
+    console.error('[ADMIN] Error deleting user:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.params.id,
+      adminUser: req.user.username,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Return generic error message for security
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to delete user. Please try again later.' 
+    });
   }
 });
 
+/**
+ * =============================================================================
+ * MODULE EXPORTS
+ * =============================================================================
+ * Export the router for use in the main application.
+ * This router handles all admin-related user management operations.
+ * =============================================================================
+ */
 module.exports = router;

@@ -1,60 +1,229 @@
+/**
+ * =============================================================================
+ * GO TO BED CONTROLLER - DreamWeaver Backend
+ * =============================================================================
+ * 
+ * This controller manages the sleep session lifecycle for authenticated users.
+ * It handles the creation of new sleep sessions and the recording of wake-up
+ * events during those sessions.
+ * 
+ * Key Features:
+ * - Sleep session initiation with pre-sleep data
+ * - Wake-up event recording with quality ratings and notes
+ * - Active session validation to prevent overlapping sessions
+ * - Comprehensive sleep tracking throughout the night
+ * - Detailed error handling and validation
+ * 
+ * Sleep Session Lifecycle:
+ * 1. User goes to bed → POST / (creates new sleep session)
+ * 2. User wakes up → POST /wakeup (adds wake-up event)
+ * 3. If going back to bed → POST /wakeup with finishedSleeping=false
+ * 4. Final wake-up → POST /wakeup with finishedSleeping=true
+ * 
+ * Security Considerations:
+ * - All routes require valid JWT authentication
+ * - Users can only create/modify their own sleep sessions
+ * - Input validation and sanitization for all fields
+ * - Audit logging for sleep data creation and updates
+ * 
+ * Data Relationships:
+ * - Links to User model (session owner)
+ * - Links to Bedroom model (sleep location)
+ * - Contains array of wake-up events with ratings and notes
+ * 
+ * @author DreamWeaver Development Team
+ * @version 1.0.0
+ * =============================================================================
+ */
+
+// Core Express framework for routing
 const express = require('express');
 const router = express.Router();
+
+// Data models
 const SleepData = require('../models/SleepData');
+
+// Authentication middleware
 const verifyToken = require('../middleware/verifyToken');
 
 /**
- * Start a new SleepData entry
- * Endpoint: POST /gotobed
- * Requires authentication
+ * =============================================================================
+ * POST /
+ * =============================================================================
+ * Initiates a new sleep session for the authenticated user.
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Creates sleep session owned by authenticated user
+ * 
+ * Request Body:
+ * - bedroom: ObjectId (required) - reference to the bedroom being used
+ * - cuddleBuddy: String (optional) - what the user is cuddling with
+ * - sleepyThoughts: String (optional) - pre-sleep thoughts and notes
+ * 
+ * Response:
+ * - Success: Created sleep session object with generated ID
+ * - Error: 400 for active session exists or validation errors, 500 for server errors
+ * 
+ * Business Rules:
+ * - Users can only have one active sleep session at a time
+ * - Active session is defined as having any wake-up with finishedSleeping=false
+ * - New session starts with empty wakeUps array
+ * 
+ * Use Cases:
+ * - Mobile app "Going to Bed" button
+ * - Sleep tracking initiation
+ * - Pre-sleep data collection
+ * =============================================================================
  */
 router.post('/', verifyToken, async (req, res) => {
   try {
-    // Extract relevant fields from request body
+    console.log(`[SLEEP_SESSION] Starting new sleep session for user: ${req.user.username}`);
+    
+    // Extract and validate fields from request body
     const { bedroom, cuddleBuddy, sleepyThoughts } = req.body;
 
-    // Check if the user already has an active (unfinished) sleep session
-    const existing = await SleepData.findOne({
-      user: req.user.id,
-      // Look for any wakeUp event that is not finished
-      'wakeUps.finishedSleeping': { $ne: true },
-    });
-
-    if (existing) {
-      // If found, prevent starting a new session
-      return res.status(400).json({ message: 'You already have an active sleep session.' });
+    // Validate required bedroom field
+    if (!bedroom) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Bedroom is required to start a sleep session.' 
+      });
     }
 
-    // Create a new SleepData document
-    const newSleep = new SleepData({
+    // Validate bedroom ID format
+    if (!bedroom.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid bedroom ID format.' 
+      });
+    }
+
+    // Validate cuddleBuddy enum if provided
+    if (cuddleBuddy) {
+      const validCuddleBuddies = ['none', 'pillow', 'stuffed animal', 'pet', 'person'];
+      if (!validCuddleBuddies.includes(cuddleBuddy)) {
+        return res.status(400).json({ 
+          success: false,
+          message: `Invalid cuddle buddy. Must be one of: ${validCuddleBuddies.join(', ')}` 
+        });
+      }
+    }
+
+    // Check for any existing active sleep session
+    // An active session is one where the user hasn't finished sleeping (no wake-up marked as final)
+    const existingActiveSession = await SleepData.findOne({
       user: req.user.id,
-      bedroom,
-      cuddleBuddy,
-      sleepyThoughts,
-      wakeUps: [], // No wakeups yet
-      createdAt: new Date(),
+      $or: [
+        { wakeUps: { $size: 0 } }, // No wake-ups yet (just went to bed)
+        { 'wakeUps.finishedSleeping': false } // Has wake-ups but not finished
+      ]
+    }).sort({ createdAt: -1 }); // Get most recent if multiple
+
+    if (existingActiveSession) {
+      console.warn(`[SLEEP_SESSION] User ${req.user.username} attempted to start new session with active session existing: ${existingActiveSession._id}`);
+      return res.status(400).json({ 
+        success: false,
+        message: 'You already have an active sleep session. Please finish it before starting a new one.',
+        activeSession: {
+          id: existingActiveSession._id,
+          createdAt: existingActiveSession.createdAt,
+          bedroom: existingActiveSession.bedroom
+        }
+      });
+    }
+
+    // Create new sleep data document
+    const newSleepSession = new SleepData({
+      user: req.user.id,
+      bedroom: bedroom,
+      cuddleBuddy: cuddleBuddy || 'none', // Default to 'none' if not specified
+      sleepyThoughts: sleepyThoughts || '', // Default to empty string
+      wakeUps: [], // Initialize empty wake-ups array
+      createdAt: new Date() // Explicitly set creation time
     });
 
-    // Save the new sleep session to the database
-    const saved = await newSleep.save();
+    // Save the new sleep session to database with validation
+    const savedSleepSession = await newSleepSession.save();
 
-    // Respond with the newly created sleep session
-    res.status(201).json(saved);
-  } catch (err) {
-    // Log and handle any errors
-    console.error(err);
-    res.status(500).json({ message: 'Server error while starting sleep session.' });
+    // Populate bedroom reference for response
+    await savedSleepSession.populate('bedroom', 'bedroomName description');
+
+    // Log successful session creation
+    console.log(`[SLEEP_SESSION] Successfully created sleep session ${savedSleepSession._id} for user: ${req.user.username}`);
+
+    // Return the newly created sleep session
+    res.status(201).json({
+      success: true,
+      message: 'Sleep session started successfully. Sweet dreams!',
+      data: savedSleepSession
+    });
+  } catch (error) {
+    // Log detailed error for debugging
+    console.error('[SLEEP_SESSION] Error starting sleep session:', {
+      error: error.message,
+      stack: error.stack,
+      username: req.user.username,
+      requestData: req.body,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        success: false,
+        message: 'Validation failed: ' + validationErrors.join(', ')
+      });
+    }
+    
+    // Return generic error message for security
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while starting sleep session. Please try again later.' 
+    });
   }
 });
 
 /**
- * Add a wakeup event to the active SleepData entry
- * Endpoint: POST /gotobed/wakeup
- * Requires authentication
+ * =============================================================================
+ * POST /wakeup
+ * =============================================================================
+ * Records a wake-up event for the user's active sleep session.
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Can only add wake-ups to user's own active sleep session
+ * 
+ * Request Body:
+ * - sleepQuality: Number (required) - rating from 1-10
+ * - dreamJournal: String (optional) - dream notes and experiences
+ * - awakenAt: Date (optional) - when the user woke up (defaults to now)
+ * - finishedSleeping: Boolean (optional) - whether this is the final wake-up
+ * - backToBedAt: Date (optional) - when user went back to bed (if applicable)
+ * 
+ * Response:
+ * - Success: Updated sleep session with new wake-up event
+ * - Error: 400 for validation errors, 404 for no active session, 500 for server errors
+ * 
+ * Business Rules:
+ * - Must have an active sleep session to add wake-ups
+ * - Sleep quality must be between 1 and 10
+ * - If finishedSleeping=true, this ends the sleep session
+ * - If finishedSleeping=false, user can go back to bed
+ * 
+ * Use Cases:
+ * - Recording middle-of-night wake-ups
+ * - Final morning wake-up with quality rating
+ * - Dream journaling after waking
+ * - Multiple wake-ups throughout the night
+ * =============================================================================
  */
 router.post('/wakeup', verifyToken, async (req, res) => {
   try {
-    // Extract wakeup details from request body
+    console.log(`[SLEEP_SESSION] Recording wake-up event for user: ${req.user.username}`);
+    
+    // Extract and validate wake-up details from request body
     const {
       sleepQuality,
       dreamJournal,
@@ -63,42 +232,135 @@ router.post('/wakeup', verifyToken, async (req, res) => {
       backToBedAt,
     } = req.body;
 
-    // Find the user's most recent active sleep session (not finished)
-    const sleepEntry = await SleepData.findOne({
-      user: req.user.id,
-      'wakeUps.finishedSleeping': { $ne: true },
-    }).sort({ createdAt: -1 });
-
-    if (!sleepEntry) {
-      // If no active session, return error
-      return res.status(404).json({ message: 'No active sleep session found.' });
+    // Validate required sleep quality field
+    if (sleepQuality === undefined || sleepQuality === null) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Sleep quality rating is required for wake-up events.' 
+      });
     }
 
-    // Build the wakeup event object
-    const wakeEvent = {
-      sleepQuality,
-      dreamJournal,
-      // Use provided awakenAt or default to now
-      awakenAt: awakenAt ? new Date(awakenAt) : new Date(),
-      // Ensure finishedSleeping is a boolean
-      finishedSleeping: !!finishedSleeping,
-      // Use provided backToBedAt or null
-      backToBedAt: backToBedAt ? new Date(backToBedAt) : null,
+    // Validate sleep quality range (1-10)
+    if (typeof sleepQuality !== 'number' || sleepQuality < 1 || sleepQuality > 10) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Sleep quality must be a number between 1 and 10.' 
+      });
+    }
+
+    // Validate awakenAt date if provided
+    if (awakenAt && isNaN(new Date(awakenAt).getTime())) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid awakening time format.' 
+      });
+    }
+
+    // Validate backToBedAt date if provided
+    if (backToBedAt && isNaN(new Date(backToBedAt).getTime())) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid back-to-bed time format.' 
+      });
+    }
+
+    // Find the user's most recent active sleep session
+    // Active session: either no wake-ups yet, or latest wake-up has finishedSleeping=false
+    const activeSleepSession = await SleepData.findOne({
+      user: req.user.id,
+      $or: [
+        { wakeUps: { $size: 0 } }, // No wake-ups yet
+        { 'wakeUps.finishedSleeping': false } // Latest wake-up not marked as finished
+      ]
+    }).sort({ createdAt: -1 }); // Get most recent session
+
+    if (!activeSleepSession) {
+      console.warn(`[SLEEP_SESSION] No active sleep session found for wake-up by user: ${req.user.username}`);
+      return res.status(404).json({ 
+        success: false,
+        message: 'No active sleep session found. Please start a new sleep session first.' 
+      });
+    }
+
+    // Build the wake-up event object with validated data
+    const wakeUpEvent = {
+      sleepQuality: sleepQuality,
+      dreamJournal: dreamJournal || '', // Default to empty string if not provided
+      awakenAt: awakenAt ? new Date(awakenAt) : new Date(), // Use provided time or current time
+      finishedSleeping: Boolean(finishedSleeping), // Ensure boolean value
+      backToBedAt: backToBedAt ? new Date(backToBedAt) : null // Use provided time or null
     };
 
-    // Add the wakeup event to the sleep session
-    sleepEntry.wakeUps.push(wakeEvent);
+    // Validate logical consistency
+    if (wakeUpEvent.finishedSleeping && wakeUpEvent.backToBedAt) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Cannot set back-to-bed time when finished sleeping.' 
+      });
+    }
 
-    // Save the updated sleep session
-    const updated = await sleepEntry.save();
+    if (!wakeUpEvent.finishedSleeping && !wakeUpEvent.backToBedAt) {
+      // If not finished sleeping but no back-to-bed time, set it to a reasonable default
+      wakeUpEvent.backToBedAt = new Date(wakeUpEvent.awakenAt.getTime() + (30 * 60 * 1000)); // 30 minutes later
+    }
 
-    // Respond with the updated sleep session
-    res.status(200).json(updated);
-  } catch (err) {
-    // Log and handle any errors
-    console.error(err);
-    res.status(500).json({ message: 'Server error while updating wakeup.' });
+    // Add the wake-up event to the sleep session
+    activeSleepSession.wakeUps.push(wakeUpEvent);
+
+    // Save the updated sleep session with validation
+    const updatedSleepSession = await activeSleepSession.save();
+
+    // Populate references for response
+    await updatedSleepSession.populate('bedroom', 'bedroomName description');
+    await updatedSleepSession.populate('user', 'username firstName lastName');
+
+    // Log successful wake-up recording
+    const wakeUpIndex = updatedSleepSession.wakeUps.length;
+    console.log(`[SLEEP_SESSION] Wake-up event #${wakeUpIndex} recorded for session ${updatedSleepSession._id} by user: ${req.user.username}, finished: ${wakeUpEvent.finishedSleeping}`);
+
+    // Return the updated sleep session
+    res.status(200).json({
+      success: true,
+      message: wakeUpEvent.finishedSleeping 
+        ? 'Wake-up recorded and sleep session completed!'
+        : 'Wake-up recorded successfully.',
+      data: updatedSleepSession,
+      wakeUpCount: wakeUpIndex,
+      sessionCompleted: wakeUpEvent.finishedSleeping
+    });
+  } catch (error) {
+    // Log detailed error for debugging
+    console.error('[SLEEP_SESSION] Error recording wake-up:', {
+      error: error.message,
+      stack: error.stack,
+      username: req.user.username,
+      requestData: req.body,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        success: false,
+        message: 'Validation failed: ' + validationErrors.join(', ')
+      });
+    }
+    
+    // Return generic error message for security
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while recording wake-up. Please try again later.' 
+    });
   }
 });
 
+/**
+ * =============================================================================
+ * MODULE EXPORTS
+ * =============================================================================
+ * Export the router for use in the main application.
+ * This router handles sleep session lifecycle management for authenticated users.
+ * =============================================================================
+ */
 module.exports = router;

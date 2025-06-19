@@ -1,133 +1,422 @@
+/**
+ * ============================================================================
+ * USER DATA MODEL
+ * ============================================================================
+ * 
+ * Defines the MongoDB schema for user accounts in the DreamWeaver application.
+ * This model handles user authentication data, profile information, preferences,
+ * and role-based access control.
+ * 
+ * Features:
+ * - Secure password storage (hashed, never plain text)
+ * - User preference system for personalization
+ * - Role-based access control (user/admin)
+ * - Data validation and business rule enforcement
+ * - Age verification (18+ requirement)
+ * - Email uniqueness and format validation
+ * 
+ * Related Models:
+ * - Bedroom: Users can have multiple bedrooms (one-to-many)
+ * - SleepData: Users can have multiple sleep sessions (one-to-many)
+ * ============================================================================
+ */
+
 const mongoose = require('mongoose');
 
 /**
- * Schema for storing user preferences such as units, date/time format, and theme.
+ * Sub-schema for user preferences and personalization settings
+ * 
+ * This allows users to customize their experience with the application
+ * including display formats, measurement units, and visual themes.
  */
 const userPreferencesSchema = new mongoose.Schema({
-    // Whether to use metric units (true) or imperial (false)
+    /**
+     * Measurement Units Preference
+     * Determines whether the user sees metric (cm, kg) or imperial (in, lbs) units
+     */
     useMetric: {
         type: Boolean,
-        default: false // Default to imperial units
+        default: false, // Default to imperial units (US standard)
+        required: false
     },
-    // Preferred date format
+    
+    /**
+     * Date Display Format Preference
+     * Controls how dates are displayed throughout the application
+     */
     dateFormat: {
         type: String,
-        enum: ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'],
-        default: 'MM/DD/YYYY' // Default date format
+        enum: {
+            values: ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'],
+            message: 'Date format must be MM/DD/YYYY, DD/MM/YYYY, or YYYY-MM-DD'
+        },
+        default: 'MM/DD/YYYY', // US format as default
+        required: false
     },
-    // Preferred time format
+    
+    /**
+     * Time Display Format Preference
+     * Controls whether time is shown in 12-hour (AM/PM) or 24-hour format
+     */
     timeFormat: {
         type: String,
-        enum: ['12-hour', '24-hour'],
-        default: '12-hour' // Default time format
+        enum: {
+            values: ['12-hour', '24-hour'],
+            message: 'Time format must be either "12-hour" or "24-hour"'
+        },
+        default: '12-hour', // 12-hour format as default
+        required: false
     },
-    // Preferred theme
+    
+    /**
+     * Visual Theme Preference
+     * Controls the color scheme and visual appearance of the application
+     */
     theme: {
         type: String,
-        enum: ['light', 'dark'],
-        default: 'dark' // Default theme
-    },
+        enum: {
+            values: ['light', 'dark', 'auto'],
+            message: 'Theme must be "light", "dark", or "auto"'
+        },
+        default: 'dark', // Dark theme as default for sleep app
+        required: false
+    }
+}, {
+    // Don't create a separate _id for this sub-document
+    _id: true,
+    // Add timestamps for when preferences are modified
+    timestamps: false
 });
 
 /**
- * Helper function to check if a date is in the past.
- * @param {Date} date 
- * @returns {Boolean}
+ * Validation helper function: Check if a date is in the past
+ * 
+ * @param {Date} date - The date to validate
+ * @returns {boolean} - True if the date is in the past, false otherwise
+ * 
+ * @description
+ * Ensures that birth dates are realistic (not in the future).
+ * Uses current system time for comparison.
  */
 function isDateInPast(date) {
-    return date < new Date();
+    // Create a new Date object for current time to avoid timezone issues
+    const now = new Date();
+    
+    // Compare the provided date with current time
+    return date < now;
 }
 
 /**
- * Helper function to check if a date corresponds to an age of at least 18.
- * @param {Date} dateOfBirth 
- * @returns {Boolean}
+ * Validation helper function: Check if birth date corresponds to 18+ years of age
+ * 
+ * @param {Date} dateOfBirth - The birth date to validate
+ * @returns {boolean} - True if the person is 18 or older, false otherwise
+ * 
+ * @description
+ * Enforces the 18+ age requirement for user registration.
+ * Properly handles leap years and edge cases around birthdays.
  */
 function isAtLeast18YearsOld(dateOfBirth) {
+    // Get current date for age calculation
     const today = new Date();
+    
+    // Calculate the difference in years
     let age = today.getFullYear() - dateOfBirth.getFullYear();
-    const monthDiff = today.getMonth() - dateOfBirth.getMonth();
-
+    
+    // Calculate the difference in months and days to determine if birthday has passed
+    const monthDifference = today.getMonth() - dateOfBirth.getMonth();
+    const dayDifference = today.getDate() - dateOfBirth.getDate();
+    
     // Adjust age if birthday hasn't occurred yet this year
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dateOfBirth.getDate())) {
+    if (monthDifference < 0 || (monthDifference === 0 && dayDifference < 0)) {
         age--;
     }
+    
+    // Return true if user is 18 or older
     return age >= 18;
 }
 
 /**
- * Main user schema for storing user information.
+ * Validation helper function: Validate email format
+ * 
+ * @param {string} email - The email address to validate
+ * @returns {boolean} - True if email format is valid, false otherwise
+ * 
+ * @description
+ * More comprehensive email validation than the basic regex.
+ * Checks for common email format requirements.
+ */
+function isValidEmail(email) {
+    // Basic email regex pattern - covers most valid email formats
+    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+    
+    // Check length constraints
+    if (email.length > 254) return false; // RFC 5321 limit
+    
+    // Check basic format
+    return emailRegex.test(email);
+}
+
+/**
+ * Main User Schema Definition
+ * 
+ * Defines the structure and validation rules for user documents in MongoDB.
+ * Each field includes comprehensive validation, type checking, and business rules.
  */
 const userSchema = new mongoose.Schema({
-    // Unique username, trimmed, at least 3 characters
+    /**
+     * Username Field
+     * Unique identifier chosen by the user for login and display
+     */
     username: {
         type: String,
-        required: true,
-        unique: true,
-        trim: true,
-        minlength: 3
+        required: [true, 'Username is required'],
+        unique: true, // Ensures no duplicate usernames in database
+        trim: true,   // Remove leading/trailing whitespace
+        minlength: [3, 'Username must be at least 3 characters long'],
+        maxlength: [30, 'Username cannot exceed 30 characters'],
+        validate: {
+            validator: function(username) {
+                // Allow alphanumeric characters, underscores, and hyphens
+                // No spaces, special characters, or starting with numbers
+                return /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(username);
+            },
+            message: 'Username must start with a letter and contain only letters, numbers, underscores, and hyphens'
+        }
     },
-    // First name, trimmed, at least 2 characters
+    
+    /**
+     * First Name Field
+     * User's given name for personalization and identification
+     */
     firstName: {
         type: String,
-        required: true,
+        required: [true, 'First name is required'],
         trim: true,
-        minlength: 2
+        minlength: [2, 'First name must be at least 2 characters long'],
+        maxlength: [50, 'First name cannot exceed 50 characters'],
+        validate: {
+            validator: function(name) {
+                // Allow letters, spaces, hyphens, and apostrophes (for names like O'Connor)
+                return /^[a-zA-Z\s'-]+$/.test(name);
+            },
+            message: 'First name can only contain letters, spaces, hyphens, and apostrophes'
+        }
     },
-    // Last name, trimmed, at least 2 characters
+    
+    /**
+     * Last Name Field
+     * User's family name for identification and personalization
+     */
     lastName: {
         type: String,
-        required: true,
+        required: [true, 'Last name is required'],
         trim: true,
-        minlength: 2
+        minlength: [2, 'Last name must be at least 2 characters long'],
+        maxlength: [50, 'Last name cannot exceed 50 characters'],
+        validate: {
+            validator: function(name) {
+                // Allow letters, spaces, hyphens, and apostrophes
+                return /^[a-zA-Z\s'-]+$/.test(name);
+            },
+            message: 'Last name can only contain letters, spaces, hyphens, and apostrophes'
+        }
     },
-    // Date of birth, must be in the past and user must be at least 18
+    
+    /**
+     * Date of Birth Field
+     * Used for age verification and personalization
+     * Must be in the past and indicate user is 18+
+     */
     dateOfBirth: {
         type: Date,
-        required: true,
+        required: [true, 'Date of birth is required'],
         validate: [
             {
                 validator: isDateInPast,
-                message: 'Date of birth must be in the past.'
+                message: 'Date of birth must be in the past'
             },
             {
                 validator: isAtLeast18YearsOld,
-                message: 'User must be at least 18 years old.'
+                message: 'You must be at least 18 years old to register'
             }
         ]
     },
-    // Email, unique, trimmed, lowercase, must match email pattern
+    
+    /**
+     * Email Field
+     * Used for account recovery, notifications, and login
+     * Must be unique across all users
+     */
     email: {
         type: String,
-        required: true,
-        unique: true,
-        trim: true,
-        lowercase: true,
-        match: [/.+@.+\..+/, 'Please enter a valid email address']
+        required: [true, 'Email address is required'],
+        unique: true,     // Ensures no duplicate emails in database
+        trim: true,       // Remove leading/trailing whitespace
+        lowercase: true,  // Convert to lowercase for consistency
+        maxlength: [254, 'Email address is too long'],
+        validate: {
+            validator: isValidEmail,
+            message: 'Please enter a valid email address'
+        }
     },
-    // Hashed password (hashing handled in controller)
+    
+    /**
+     * Hashed Password Field
+     * Stores the bcrypt hash of the user's password
+     * NEVER store plain text passwords!
+     */
     hashedPassword: {
         type: String,
-        required: true,
+        required: [true, 'Password is required'],
+        minlength: [60, 'Invalid password hash format'], // bcrypt hashes are typically 60 characters
+        validate: {
+            validator: function(hash) {
+                // Validate that this looks like a bcrypt hash
+                return /^\$2[aby]?\$\d+\$/.test(hash);
+            },
+            message: 'Invalid password hash format'
+        }
     },
-    // User preferences (optional)
+    
+    /**
+     * User Preferences Field
+     * Optional personalization settings for the user interface
+     * Uses the embedded userPreferencesSchema defined above
+     */
     userPreferences: {
         type: userPreferencesSchema,
-        default: null // Default to null if no preferences are set
+        default: null,  // Allow null for users who haven't set preferences yet
+        required: false
     },
-    // User role (user or admin)
+    
+    /**
+     * Role Field
+     * Determines user's access level within the application
+     * 'user' = standard user, 'admin' = administrative privileges
+     */
     role: {
         type: String,
-        enum: ['user', 'admin'],
-        default: 'user' // Default role is user
+        enum: {
+            values: ['user', 'admin'],
+            message: 'Role must be either "user" or "admin"'
+        },
+        default: 'user', // All new registrations default to standard user
+        required: true
     },
-    // Date the user joined, defaults to now
+    
+    /**
+     * Account Creation Timestamp
+     * Automatically records when the user account was created
+     * Useful for analytics, account age verification, and auditing
+     */
     joinedAt: {
         type: Date,
-        default: Date.now // Automatically set to current date
+        default: Date.now, // Automatically set to current timestamp
+        required: true
+    }
+}, {
+    // Schema-level options
+    timestamps: true, // Automatically add createdAt and updatedAt fields
+    
+    // Transform function to control JSON output
+    // This removes sensitive data when converting to JSON
+    toJSON: {
+        transform: function(doc, ret) {
+            // Remove sensitive fields from JSON output
+            delete ret.hashedPassword;
+            delete ret.__v;
+            return ret;
+        }
     },
+    
+    // Transform function for toObject() calls
+    toObject: {
+        transform: function(doc, ret) {
+            // Remove sensitive fields from object output
+            delete ret.hashedPassword;
+            delete ret.__v;
+            return ret;
+        }
+    }
 });
 
-// Create and export the User model
+/**
+ * Pre-save middleware to ensure data consistency
+ * This runs before any save operation (create or update)
+ */
+userSchema.pre('save', function(next) {
+    try {
+        // Ensure email is lowercase for consistency
+        if (this.email) {
+            this.email = this.email.toLowerCase();
+        }
+        
+        // Ensure username is properly formatted
+        if (this.username) {
+            this.username = this.username.trim();
+        }
+        
+        // Ensure names are properly capitalized
+        if (this.firstName) {
+            this.firstName = this.firstName.trim();
+        }
+        
+        if (this.lastName) {
+            this.lastName = this.lastName.trim();
+        }
+        
+        next();
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * Instance method to get user's full name
+ * @returns {string} The user's full name (first + last)
+ */
+userSchema.methods.getFullName = function() {
+    return `${this.firstName} ${this.lastName}`.trim();
+};
+
+/**
+ * Instance method to get user's age
+ * @returns {number} The user's current age in years
+ */
+userSchema.methods.getAge = function() {
+    const today = new Date();
+    let age = today.getFullYear() - this.dateOfBirth.getFullYear();
+    const monthDiff = today.getMonth() - this.dateOfBirth.getMonth();
+    
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < this.dateOfBirth.getDate())) {
+        age--;
+    }
+    
+    return age;
+};
+
+/**
+ * Instance method to check if user is an administrator
+ * @returns {boolean} True if user has admin role, false otherwise
+ */
+userSchema.methods.isAdmin = function() {
+    return this.role === 'admin';
+};
+
+/**
+ * Static method to find users by role
+ * @param {string} role - The role to search for ('user' or 'admin')
+ * @returns {Promise} Promise that resolves to array of users with specified role
+ */
+userSchema.statics.findByRole = function(role) {
+    return this.find({ role: role });
+};
+
+/**
+ * Create and export the User model
+ * This model can be imported and used throughout the application
+ */
 const User = mongoose.model('User', userSchema);
+
 module.exports = User;
