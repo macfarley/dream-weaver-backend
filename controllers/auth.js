@@ -442,11 +442,5 @@ router.post('/sign-in', async (req, res) => {
  * Alias for the /auth/sign-in endpoint to maintain backward compatibility
  * with existing client applications or API consumers.
  */
-router.post('/login', async (req, res) => {
-    // Forward the request to the sign-in handler
-    // This ensures consistent behavior between both endpoints
-    return router.post('/sign-in')(req, res);
-});
-
 // Export the router for use in the main application
 module.exports = router;
