@@ -45,61 +45,196 @@ This is the **backend** repository for DreamWeaver, providing a RESTful API buil
 ## 📂 Project Structure
 
 ```
-backend/
-├── controllers/
-│   ├── admin.js
-│   ├── auth.js
-│   ├── bedrooms.js
-│   ├── goToBed.js
-│   ├── sleepData.js
-│   └── users.js
-├── middleware/
-│   ├── requireAdmin.js
-│   └── verifyToken.js
-├── models/
-│   ├── Bedroom.js
-│   ├── SleepData.js
-│   └── User.js
-├── scripts/
-│   └── seed.js
-├── .env
-├── server.js
-└── package.json
+dream-weaver-backend/
+├── controllers/           # API route handlers
+│   ├── admin.js          # Admin user management
+│   ├── auth.js           # Authentication (signup/signin)
+│   ├── bedrooms.js       # Bedroom CRUD operations
+│   ├── goToBed.js        # Sleep session management
+│   ├── sleepData.js      # Sleep data tracking
+│   └── users.js          # User profile management
+├── middleware/           # Express middleware
+│   ├── requireAdmin.js   # Admin role verification
+│   └── verifyToken.js    # JWT token validation
+├── models/              # MongoDB schemas
+│   ├── Bedroom.js       # Bedroom environment model
+│   ├── SleepData.js     # Sleep session model
+│   └── User.js          # User account model
+├── scripts/             # Utility scripts
+│   └── seed.js          # Database seeding script
+├── .env.example         # Environment template
+├── .gitignore          # Git ignore rules
+├── package.json        # Dependencies and scripts
+├── README.md           # This file
+└── server.js           # Main application entry point
 ```
 
 ---
 
-## 📦 Installation
+## 🚨 Troubleshooting
 
-1. Clone the backend repo:
+### Common Issues
 
-   ```bash
-   git clone https://github.com/macfarley/dream-weaver-backend.git
-   cd dream-weaver-backend
-Install dependencies:
+**🔌 Database Connection Failed**
+```bash
+# Error: MONGODB_URI not set
+# Solution: Check your .env file has MONGODB_URI set correctly
 
-bash
-Copy
-Edit
+# Error: MongoNetworkError  
+# Solution: Verify MongoDB is running (local) or connection string is correct (Atlas)
+```
+
+**🔐 JWT Token Issues**
+```bash
+# Error: JWT_SECRET not set
+# Solution: Add JWT_SECRET to .env file with a secure random string
+
+# Generate a secure JWT secret:
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+**👤 Admin User Not Found (Seeding)**
+```bash
+# Error: Admin user 'admin' not found
+# Solution: Create admin user first via /auth/sign-up or update ADMIN_USERNAME in .env
+```
+
+**⚠️ Express Version Issues**
+```bash
+# Error: path-to-regexp TypeError
+# Solution: This project uses Express 4.x (stable). If you see this error, check package.json
+```
+
+### Development Tips
+- **Use nodemon**: `npm run dev` for auto-restart during development
+- **Check logs**: Server logs show detailed error messages and connection status
+- **Test endpoints**: Use Postman, curl, or the health endpoint for testing
+- **Database GUI**: Use MongoDB Compass or Studio 3T to visualize your data
+
+---
+
+## 📦 Installation & Setup
+
+### Prerequisites
+- **Node.js** (v16 or higher)
+- **MongoDB** database (local installation or MongoDB Atlas)
+- **Git** for version control
+
+### 1. Clone and Install
+```bash
+git clone https://github.com/macfarley/dream-weaver-backend.git
+cd dream-weaver-backend
 npm install
-3. Create a `.env` file with the following variables:
+```
 
-   ```ini
-   PORT=3000
-   MONGODB_URI=your_mongodb_connection_string
-   JWT_SECRET=your_jwt_secret_key
-   ```
-4. Seed the database (optional):
+### 2. Environment Configuration
+Create a `.env` file in the project root:
 
-   ```bash
-   node scripts/seed.js
-   ```
+```ini
+# Database Configuration
+MONGODB_URI=mongodb://localhost:27017/dreamweaver
+# For MongoDB Atlas: mongodb+srv://username:password@cluster.mongodb.net/dreamweaver
 
-5. Run the server locally:
+# Authentication
+JWT_SECRET=your-super-secure-jwt-secret-key-change-this-in-production
 
-   ```bash
-   npm start
-   ```
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# Admin Configuration (for seeding)
+ADMIN_USERNAME=admin
+```
+
+**⚠️ Security Note**: Never commit your actual `.env` file. Use `.env.example` as a template.
+
+### 3. Database Setup
+
+#### Option A: Create Admin User Manually
+```bash
+# First, start the server
+npm run dev
+
+# Then create an admin user via API:
+curl -X POST http://localhost:3000/auth/sign-up \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "email": "admin@dreamweaver.com", 
+    "password": "your-admin-password",
+    "firstName": "Dream",
+    "lastName": "Administrator"
+  }'
+```
+
+#### Option B: Use Database Seeding (Recommended for Development)
+```bash
+# Ensure admin user exists first, then run:
+npm run seed
+```
+
+**What the seed script creates:**
+- 🎯 **Finds existing admin user** (set via `ADMIN_USERNAME` environment variable)
+- 👥 **3 test users**: `dreamtester1`, `dreamtester2`, `sleepyuser` (password: `password123`)
+- 🏠 **3 bedrooms per user** (master bedroom, reading nook, guest room)
+- 💤 **30 days of sleep data per user** (realistic sleep patterns with wake-ups)
+- ✅ **120 total sleep sessions** with dream journals and quality ratings
+
+### 4. Start the Server
+```bash
+# Development mode (auto-restart on changes)
+npm run dev
+
+# Production mode
+npm start
+```
+
+### 5. Verify Installation
+- **Health Check**: http://localhost:3000/health
+- **API Documentation**: See endpoints below
+- **Database Connection**: Check console for MongoDB connection status
+
+---
+
+## 🗄️ Database Seeding
+
+The seeding script creates comprehensive test data for development and testing:
+
+### Running the Seed Script
+```bash
+# Method 1: NPM script
+npm run seed
+
+# Method 2: Direct execution  
+node scripts/seed.js
+```
+
+### Seed Script Features
+- **🔍 Smart User Detection**: Finds existing admin user, creates test users if missing
+- **🧹 Data Cleanup**: Removes existing seed data before creating new data
+- **📊 Realistic Data**: Uses Faker.js for diverse, realistic content
+- **⏰ Historical Data**: Creates 30 days of backdated sleep sessions
+- **🛡️ Safe Operation**: Only affects test users and admin user data
+
+### Test User Credentials
+After seeding, you can test with these accounts:
+```
+Username: dreamtester1  | Password: password123
+Username: dreamtester2  | Password: password123  
+Username: sleepyuser    | Password: password123
+```
+
+### Seed Data Structure
+- **Users**: Admin + 3 test users with realistic profiles
+- **Bedrooms**: 3 different bedroom types per user (12 total)
+- **Sleep Sessions**: 30 entries per user spanning last 30 days (120 total)
+- **Wake Events**: 1-3 wake-ups per session with quality ratings (average 1.9 per session)
+
+### Environment Variables for Seeding
+```ini
+ADMIN_USERNAME=admin          # Username of admin user (must exist)
+MONGODB_URI=your_db_url      # Database connection string
+```
 
 ---
 
@@ -192,6 +327,40 @@ npm install
 - User, bedroom, and session details
 - Sleep thoughts, wake-up counts, cuddle buddy
 - Timestamps and session metadata
+
+---
+
+## ✅ Developer Setup Checklist
+
+**For new developers joining the project:**
+
+### Initial Setup
+- [ ] Clone repository: `git clone https://github.com/macfarley/dream-weaver-backend.git`
+- [ ] Install dependencies: `npm install`
+- [ ] Copy `.env.example` to `.env` and configure variables
+- [ ] Verify Node.js version (v16+) and MongoDB access
+- [ ] Test server starts: `npm run dev`
+- [ ] Check health endpoint: http://localhost:3000/health
+
+### Database Setup  
+- [ ] Create admin user via `/auth/sign-up` API call
+- [ ] Update `ADMIN_USERNAME` in `.env` to match your admin username
+- [ ] Run seeding script: `npm run seed`
+- [ ] Verify test data created (check MongoDB or use API endpoints)
+
+### Testing Setup
+- [ ] Test authentication: Try login with test users (`dreamtester1/password123`)
+- [ ] Test protected routes: Create/read bedrooms with valid JWT token
+- [ ] Test admin routes: Access admin endpoints with admin user
+- [ ] Verify CORS: Test from your frontend application
+
+### Development Workflow
+- [ ] Use `npm run dev` for development (auto-restart)
+- [ ] Check server logs for detailed error messages
+- [ ] Use MongoDB GUI tool for database inspection
+- [ ] Follow the API documentation for endpoint testing
+
+**Need Help?** Check the troubleshooting section above or contact the development team.
 
 ---
 
