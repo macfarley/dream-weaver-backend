@@ -67,7 +67,7 @@ const verifyToken = require('../middleware/verifyToken');
  * 
  * Business Rules:
  * - Users can only have one active sleep session at a time
- * - Active session is defined as having any wake-up with finishedSleeping=false
+ * - Active session is defined as having no wake-ups OR the LAST wake-up has finishedSleeping=false
  * - New session starts with empty wakeUps array
  * 
  * Use Cases:
@@ -111,24 +111,48 @@ router.post('/', verifyToken, async (req, res) => {
     }
 
     // Check for any existing active sleep session
-    // An active session is one where the user hasn't finished sleeping (no wake-up marked as final)
-    const existingActiveSession = await SleepData.findOne({
-      user: req.user.id,
-      $or: [
-        { wakeUps: { $size: 0 } }, // No wake-ups yet (just went to bed)
-        { 'wakeUps.finishedSleeping': false } // Has wake-ups but not finished
-      ]
-    }).sort({ createdAt: -1 }); // Get most recent if multiple
+    // An active session is one where:
+    // 1. No wake-ups yet (just went to bed), OR
+    // 2. The LAST wake-up has finishedSleeping: false (still in session)
+    const recentSessions = await SleepData.find({
+      user: req.user.id
+    }).sort({ createdAt: -1 }).limit(5); // Get 5 most recent sessions to check
+    
+    let existingActiveSession = null;
+    
+    for (const session of recentSessions) {
+      if (session.wakeUps.length === 0) {
+        // No wake-ups yet - this is definitely an active session
+        existingActiveSession = session;
+        break;
+      } else {
+        // Check if the LAST wake-up has finishedSleeping: false
+        const lastWakeUp = session.wakeUps[session.wakeUps.length - 1];
+        if (lastWakeUp && lastWakeUp.finishedSleeping === false) {
+          // Last wake-up is not marked as finished - session is still active
+          existingActiveSession = session;
+          break;
+        }
+      }
+      // If we get here, this session is finished (last wake-up has finishedSleeping: true)
+      // Continue to check older sessions
+    }
 
     if (existingActiveSession) {
-      console.warn(`[SLEEP_SESSION] User ${req.user.username} attempted to start new session with active session existing: ${existingActiveSession._id}`);
+      const sessionStatus = existingActiveSession.wakeUps.length === 0 
+        ? 'no wake-ups recorded yet' 
+        : `last wake-up not marked as finished (${existingActiveSession.wakeUps.length} wake-ups total)`;
+        
+      console.warn(`[SLEEP_SESSION] User ${req.user.username} attempted to start new session with active session existing: ${existingActiveSession._id} (${sessionStatus})`);
       return res.status(400).json({ 
         success: false,
         message: 'You already have an active sleep session. Please finish it before starting a new one.',
         activeSession: {
           id: existingActiveSession._id,
           createdAt: existingActiveSession.createdAt,
-          bedroom: existingActiveSession.bedroom
+          bedroom: existingActiveSession.bedroom,
+          wakeUpCount: existingActiveSession.wakeUps.length,
+          status: sessionStatus
         }
       });
     }
@@ -266,16 +290,33 @@ router.post('/wakeup', verifyToken, async (req, res) => {
 
     // Find the user's most recent active sleep session
     // Active session: either no wake-ups yet, or latest wake-up has finishedSleeping=false
-    const activeSleepSession = await SleepData.findOne({
-      user: req.user.id,
-      $or: [
-        { wakeUps: { $size: 0 } }, // No wake-ups yet
-        { 'wakeUps.finishedSleeping': false } // Latest wake-up not marked as finished
-      ]
-    }).sort({ createdAt: -1 }); // Get most recent session
+    const recentSessions = await SleepData.find({
+      user: req.user.id
+    }).sort({ createdAt: -1 }).limit(5); // Get 5 most recent sessions to check
+    
+    let activeSleepSession = null;
+    
+    for (const session of recentSessions) {
+      if (session.wakeUps.length === 0) {
+        // No wake-ups yet - this is definitely an active session
+        activeSleepSession = session;
+        break;
+      } else {
+        // Check if the LAST wake-up has finishedSleeping: false
+        const lastWakeUp = session.wakeUps[session.wakeUps.length - 1];
+        if (lastWakeUp && lastWakeUp.finishedSleeping === false) {
+          // Last wake-up is not marked as finished - session is still active
+          activeSleepSession = session;
+          break;
+        }
+      }
+      // If we get here, this session is finished (last wake-up has finishedSleeping: true)
+      // Continue to check older sessions
+    }
 
     if (!activeSleepSession) {
       console.warn(`[SLEEP_SESSION] No active sleep session found for wake-up by user: ${req.user.username}`);
+      console.log(`[SLEEP_SESSION] Recent sessions checked: ${recentSessions.length}, all appear to be finished`);
       return res.status(404).json({ 
         success: false,
         message: 'No active sleep session found. Please start a new sleep session first.' 
