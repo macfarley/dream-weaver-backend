@@ -16,6 +16,11 @@ coverage/
 # Build output - excluded as it's generated from source
 dist/
 
+# Test files - excluded to prevent temporary test code in repository
+test-*.js
+*.test.js
+__tests__/
+
 # Development notes - excluded for workspace organization
 .dev-notes/
 dev-notes.md

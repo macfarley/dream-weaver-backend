@@ -275,6 +275,7 @@ MONGODB_URI=your_db_url      # Database connection string
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
 | `/gotobed` | POST | Start new sleep session | Yes |
+| `/gotobed/active` | GET | Check for active session | Yes |
 | `/gotobed/wakeup` | POST | Add wakeup data to session | Yes |
 
 ### 🛠️ **Admin Routes**
