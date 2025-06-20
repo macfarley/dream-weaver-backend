@@ -432,7 +432,19 @@ router.put('/users/:id', verifyToken, async (req, res) => {
 router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
-    const adminPassword = req.headers['x-admin-password'];
+    
+    console.log(`[ADMIN] Delete user request for ID: ${userId} by admin: ${req.user.username}`);
+    
+    // Support multiple authentication approaches for frontend compatibility
+    const adminPassword = req.headers['x-admin-password'] || 
+                         req.body.password || 
+                         req.body.adminPassword;
+                         
+    console.log(`[ADMIN] Password source: ${
+      req.headers['x-admin-password'] ? 'header' : 
+      req.body.password ? 'body.password' : 
+      req.body.adminPassword ? 'body.adminPassword' : 'none'
+    }`);
 
     // Validate the provided user ID format
     if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
@@ -445,9 +457,10 @@ router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
     // Require admin password for deletion confirmation
     if (!adminPassword) {
       console.warn(`[SECURITY] User deletion attempted without admin password by ${req.user.username}`);
-      return res.status(400).json({ 
+      return res.status(401).json({ 
         success: false,
-        error: 'Admin password required for user deletion confirmation.' 
+        error: 'Admin password required for user deletion confirmation.',
+        message: 'Admin password required for user deletion confirmation.' 
       });
     }
 
@@ -476,7 +489,8 @@ router.delete('/users/:id', verifyToken, requireAdmin, async (req, res) => {
       console.warn(`[SECURITY] Incorrect admin password for deletion by ${req.user.username}`);
       return res.status(403).json({ 
         success: false,
-        error: 'Incorrect admin password. Deletion cancelled.' 
+        error: 'Incorrect admin password. Deletion cancelled.',
+        message: 'Invalid admin password provided.' 
       });
     }
 
