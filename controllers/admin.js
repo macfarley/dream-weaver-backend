@@ -1,8 +1,5 @@
 /**
- * =========================// Data Models
-const User = require('../models/User');
-const Bedroom = require('../models/Bedroom');
-const SleepData = require('../models/SleepData');==================================================
+ * =============================================================================
  * ADMIN CONTROLLER - DreamWeaver Backend
  * =============================================================================
  * 
@@ -35,6 +32,8 @@ const router = express.Router();
 
 // Data models
 const User = require('../models/User');
+const Bedroom = require('../models/Bedroom');
+const SleepData = require('../models/SleepData');
 
 // Security and authentication utilities
 const bcrypt = require('bcrypt'); // For password hashing and comparison
