@@ -1,6 +1,22 @@
+# Dependencies - excluded to save storage space
 node_modules/
+
+# Environment variables - excluded for security reasons
 .env
+
+# Log files - excluded to prevent noise in repository
 *.log
+
+# Operating system files - excluded to prevent cross-platform issues
 .DS_Store
+
+# Test coverage reports - excluded to save storage space
 coverage/
+
+# Build output - excluded as it's generated from source
 dist/
+
+# Development notes - excluded for workspace organization
+.dev-notes/
+dev-notes.md
+development-log.md
