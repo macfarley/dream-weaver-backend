@@ -143,16 +143,29 @@ router.post('/', verifyToken, async (req, res) => {
         ? 'no wake-ups recorded yet' 
         : `last wake-up not marked as finished (${existingActiveSession.wakeUps.length} wake-ups total)`;
         
-      console.warn(`[SLEEP_SESSION] User ${req.user.username} attempted to start new session with active session existing: ${existingActiveSession._id} (${sessionStatus})`);
-      return res.status(400).json({ 
+      console.log(`[SLEEP_SESSION] User ${req.user.username} has active session: ${existingActiveSession._id} (${sessionStatus})`);
+      
+      // Populate bedroom and user data for the active session
+      await existingActiveSession.populate('bedroom', 'bedroomName description');
+      await existingActiveSession.populate('user', 'username firstName lastName');
+      
+      return res.status(409).json({ 
         success: false,
-        message: 'You already have an active sleep session. Please finish it before starting a new one.',
+        error: 'ACTIVE_SESSION_EXISTS',
+        message: 'You already have an active sleep session. Redirecting to wake-up page.',
+        redirectTo: '/gotobed/wakeup',
         activeSession: {
           id: existingActiveSession._id,
           createdAt: existingActiveSession.createdAt,
           bedroom: existingActiveSession.bedroom,
+          user: existingActiveSession.user,
+          cuddleBuddy: existingActiveSession.cuddleBuddy,
+          sleepyThoughts: existingActiveSession.sleepyThoughts,
           wakeUpCount: existingActiveSession.wakeUps.length,
-          status: sessionStatus
+          status: sessionStatus,
+          lastWakeUp: existingActiveSession.wakeUps.length > 0 
+            ? existingActiveSession.wakeUps[existingActiveSession.wakeUps.length - 1]
+            : null
         }
       });
     }
@@ -392,6 +405,99 @@ router.post('/wakeup', verifyToken, async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Server error while recording wake-up. Please try again later.' 
+    });
+  }
+});
+
+/**
+ * =============================================================================
+ * GET /active
+ * =============================================================================
+ * Gets the user's current active sleep session details.
+ * 
+ * Access Control:
+ * - Requires valid JWT token
+ * - Returns only user's own active session
+ * 
+ * Response:
+ * - Success: Active session details with bedroom and wake-up information
+ * - Error: 404 if no active session found
+ * 
+ * Use Cases:
+ * - Wake-up page initialization
+ * - Checking if user has an active session
+ * - Displaying current session details
+ * =============================================================================
+ */
+router.get('/active', verifyToken, async (req, res) => {
+  try {
+    console.log(`[SLEEP_SESSION] Fetching active session for user: ${req.user.username}`);
+    
+    // Find the user's most recent active sleep session
+    const recentSessions = await SleepData.find({
+      user: req.user.id
+    }).sort({ createdAt: -1 }).limit(5);
+    
+    let activeSleepSession = null;
+    
+    for (const session of recentSessions) {
+      if (session.wakeUps.length === 0) {
+        activeSleepSession = session;
+        break;
+      } else {
+        const lastWakeUp = session.wakeUps[session.wakeUps.length - 1];
+        if (lastWakeUp && lastWakeUp.finishedSleeping === false) {
+          activeSleepSession = session;
+          break;
+        }
+      }
+    }
+
+    if (!activeSleepSession) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active sleep session found.'
+      });
+    }
+
+    // Populate references for complete session details
+    await activeSleepSession.populate('bedroom', 'bedroomName description temperature lightLevel noiseLevel');
+    await activeSleepSession.populate('user', 'username firstName lastName');
+
+    const sessionStatus = activeSleepSession.wakeUps.length === 0 
+      ? 'sleeping' 
+      : 'awake';
+
+    console.log(`[SLEEP_SESSION] Active session found for ${req.user.username}: ${activeSleepSession._id}`);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        id: activeSleepSession._id,
+        createdAt: activeSleepSession.createdAt,
+        bedroom: activeSleepSession.bedroom,
+        user: activeSleepSession.user,
+        cuddleBuddy: activeSleepSession.cuddleBuddy,
+        sleepyThoughts: activeSleepSession.sleepyThoughts,
+        wakeUpCount: activeSleepSession.wakeUps.length,
+        status: sessionStatus,
+        wakeUps: activeSleepSession.wakeUps,
+        lastWakeUp: activeSleepSession.wakeUps.length > 0 
+          ? activeSleepSession.wakeUps[activeSleepSession.wakeUps.length - 1]
+          : null
+      }
+    });
+  } catch (error) {
+    console.error('[SLEEP_SESSION] Error fetching active session:', {
+      error: error.message,
+      stack: error.stack,
+      username: req.user.username,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching active session.'
     });
   }
 });
