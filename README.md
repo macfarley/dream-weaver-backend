@@ -249,16 +249,15 @@ MONGODB_URI=your_db_url      # Database connection string
 ### 👤 **User Routes**
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
+| `/users/` | GET | Get user's sleep data (alternative endpoint) | Yes |
 | `/users/profile` | PATCH | Update current user profile (partial) | Yes |
-| `/users/admin/all` | GET | List all users (admin only) | Admin only |
-| `/users/admin/:userId/role` | PUT | Change user role (admin only) | Admin only |
-| `/users/admin/:userId` | DELETE | Delete user (admin only) | Admin only |
 
 ### 🛏️ **Bedroom Routes**
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
 | `/bedrooms` | GET | List user bedrooms | Yes |
-| `/bedrooms` | POST | Create new bedroom | Yes |
+| `/bedrooms/new` | POST | Create new bedroom | Yes |
+| `/bedrooms/by-name/:bedroomName` | GET | Get bedroom by name | Yes |
 | `/bedrooms/:id` | GET | Get bedroom by ID | Yes |
 | `/bedrooms/:id` | PUT | Update bedroom | Yes |
 | `/bedrooms/:id` | DELETE | Delete bedroom | Yes |
