@@ -159,7 +159,7 @@ router.get('/', async (req, res, next) => {
     // Sort by creation date descending (most recent first)
     const sleepData = await SleepData.find({ user: req.user.id })
       .sort({ createdAt: -1 })
-      .populate('bedroom', 'name description') // Include basic bedroom info
+      .populate('bedroom', 'bedroomName description') // Include basic bedroom info
       .populate('user', 'username firstName lastName'); // Include basic user info
 
     // Log successful retrieval
@@ -258,7 +258,7 @@ router.get('/:date', async (req, res, next) => {
         $lt: endOfDay      // Less than start of next day
       },
     })
-    .populate('bedroom', 'name description') // Include bedroom details
+    .populate('bedroom', 'bedroomName description') // Include bedroom details
     .populate('user', 'username firstName lastName'); // Include user details
 
     // Return 404 if no sleep data found for the specified date
