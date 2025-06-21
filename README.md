@@ -249,7 +249,7 @@ MONGODB_URI=your_db_url      # Database connection string
 ### 👤 **User Routes**
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
-| `/users/profile` | PUT | Update current user profile | Yes |
+| `/users/profile` | PATCH | Update current user profile (partial) | Yes |
 | `/users/admin/all` | GET | List all users (admin only) | Admin only |
 | `/users/admin/:userId/role` | PUT | Change user role (admin only) | Admin only |
 | `/users/admin/:userId` | DELETE | Delete user (admin only) | Admin only |

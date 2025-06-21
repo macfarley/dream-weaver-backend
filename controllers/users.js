@@ -116,18 +116,24 @@ router.get('/', async (req, res) => {
 
 /**
  * =============================================================================
- * PUT /profile
+ * PATCH /profile
  * =============================================================================
- * Updates the authenticated user's profile information.
+ * Updates the authenticated user's profile information using PATCH semantics.
  * 
  * Access Control:
  * - Requires valid JWT token
  * - Users can only update their own profile
  * 
+ * PATCH Semantics:
+ * - Only provided fields are updated (partial updates)
+ * - Missing fields are ignored (not updated)
+ * - Empty strings are valid and will clear/empty fields
+ * - Null values are treated as field clearing
+ * 
  * Request Body (all optional):
- * - firstName: String - user's first name
- * - lastName: String - user's last name
- * - email: String - user's email address
+ * - firstName: String - user's first name (empty string clears field)
+ * - lastName: String - user's last name (empty string clears field)
+ * - email: String - user's email address (empty string clears field)
  * - dateOfBirth: Date - user's date of birth
  * - userPreferences: Object - user preference settings
  * 
@@ -141,15 +147,19 @@ router.get('/', async (req, res) => {
  * - Error: 400 for validation errors, 500 for server errors
  * 
  * Validation:
- * - Email format and uniqueness validation
+ * - Email format validation (only for non-empty emails)
+ * - Email uniqueness validation
  * - Date format validation for dateOfBirth
  * - User preferences object structure validation
  * =============================================================================
  */
-router.put('/profile', async (req, res) => {
+router.patch('/profile', async (req, res) => {
   try {
     const userId = req.user.id;
-    console.log(`[USER_PROFILE] Updating profile for user: ${req.user.username}`);
+    console.log(`[USER_PROFILE] PATCH profile request for user: ${req.user.username}`, {
+      providedFields: Object.keys(req.body),
+      timestamp: new Date().toISOString()
+    });
     
     const updateData = { ...req.body };
     
@@ -159,29 +169,39 @@ router.put('/profile', async (req, res) => {
     delete updateData.hashedPassword; // Password changes need separate endpoint
     delete updateData.password;    // Same as above
     
-    // Validate email format if provided
-    if (updateData.email) {
-      if (typeof updateData.email !== 'string' || !updateData.email.match(/^[^@]+@[^@]+\.[^@]+$/)) {
+    // Validate email format if provided and not empty
+    if (updateData.email !== undefined) {
+      if (updateData.email !== '' && typeof updateData.email === 'string') {
+        if (!updateData.email.match(/^[^@]+@[^@]+\.[^@]+$/)) {
+          return res.status(400).json({ 
+            success: false,
+            error: 'Invalid email format.' 
+          });
+        }
+        
+        // Check for email uniqueness
+        const existingUser = await User.findOne({ 
+          email: updateData.email.toLowerCase(),
+          _id: { $ne: userId } // Exclude current user
+        });
+        
+        if (existingUser) {
+          return res.status(400).json({ 
+            success: false,
+            error: 'Email is already in use by another account.' 
+          });
+        }
+        
+        updateData.email = updateData.email.toLowerCase(); // Normalize email
+      } else if (updateData.email === '') {
+        // Allow empty string to clear email (if business logic permits)
+        updateData.email = '';
+      } else {
         return res.status(400).json({ 
           success: false,
-          error: 'Invalid email format.' 
+          error: 'Email must be a string.' 
         });
       }
-      
-      // Check for email uniqueness
-      const existingUser = await User.findOne({ 
-        email: updateData.email.toLowerCase(),
-        _id: { $ne: userId } // Exclude current user
-      });
-      
-      if (existingUser) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Email is already in use by another account.' 
-        });
-      }
-      
-      updateData.email = updateData.email.toLowerCase(); // Normalize email
     }
     
     // Validate date of birth if provided
@@ -204,6 +224,29 @@ router.put('/profile', async (req, res) => {
       updateData.dateOfBirth = dob;
     }
     
+    // Handle individual preference fields by building userPreferences object
+    const preferenceFields = [
+      'prefersImperial', 'theme', 'dateFormat', 'timeFormat', 
+      'sleepReminderEnabled', 'sleepReminderHours'
+    ];
+    
+    const hasPreferenceFields = preferenceFields.some(field => updateData[field] !== undefined);
+    
+    if (hasPreferenceFields) {
+      // If individual preference fields are provided, build the userPreferences object
+      if (!updateData.userPreferences) {
+        updateData.userPreferences = {};
+      }
+      
+      // Move individual preference fields into userPreferences object
+      preferenceFields.forEach(field => {
+        if (updateData[field] !== undefined) {
+          updateData.userPreferences[field] = updateData[field];
+          delete updateData[field]; // Remove from top level
+        }
+      });
+    }
+    
     // Validate user preferences if provided
     if (updateData.userPreferences !== undefined) {
       if (typeof updateData.userPreferences !== 'object' || updateData.userPreferences === null) {
@@ -214,25 +257,27 @@ router.put('/profile', async (req, res) => {
       }
     }
     
-    // Validate name fields if provided
+    // Validate name fields - allow empty strings to clear fields
     if (updateData.firstName !== undefined) {
-      if (typeof updateData.firstName !== 'string' || updateData.firstName.trim().length === 0) {
+      if (typeof updateData.firstName !== 'string') {
         return res.status(400).json({ 
           success: false,
-          error: 'First name must be a non-empty string.' 
+          error: 'First name must be a string.' 
         });
       }
-      updateData.firstName = updateData.firstName.trim();
+      // Allow empty string to clear first name, otherwise trim whitespace
+      updateData.firstName = updateData.firstName === '' ? '' : updateData.firstName.trim();
     }
     
     if (updateData.lastName !== undefined) {
-      if (typeof updateData.lastName !== 'string' || updateData.lastName.trim().length === 0) {
+      if (typeof updateData.lastName !== 'string') {
         return res.status(400).json({ 
           success: false,
-          error: 'Last name must be a non-empty string.' 
+          error: 'Last name must be a string.' 
         });
       }
-      updateData.lastName = updateData.lastName.trim();
+      // Allow empty string to clear last name, otherwise trim whitespace
+      updateData.lastName = updateData.lastName === '' ? '' : updateData.lastName.trim();
     }
 
     // Update user document with validation
