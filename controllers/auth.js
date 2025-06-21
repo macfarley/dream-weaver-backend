@@ -31,16 +31,11 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 
 // Import data models
 const User = require('../models/User');    // User account data
 const Bedroom = require('../models/Bedroom'); // Bedroom environment data
-
-// Security configuration constants
-const SALT_ROUNDS = 12;           // bcrypt salt rounds (higher = more secure but slower)
-const JWT_SECRET = process.env.JWT_SECRET;  // Secret key for JWT signing (from environment)
-const TOKEN_EXPIRY = '24h';       // JWT token expiration time (24 hours)
+const jwtUtils = require('../utils/jwt');
 
 /**
  * Input validation helper for user registration
@@ -232,7 +227,7 @@ router.post('/sign-up', async (req, res) => {
         // Hash the password using bcrypt with configured salt rounds
         // This ensures passwords are never stored in plain text
         console.log(`🔐 Hashing password for user: ${username}`);
-        const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+        const hashedPassword = await bcrypt.hash(password, 12);
 
         // Create new user document with validated and processed data
         const newUser = new User({
@@ -267,7 +262,7 @@ router.post('/sign-up', async (req, res) => {
         // Generate JWT token for immediate authentication
         // This allows the user to start using the app right after registration
         const jwtPayload = createJWTPayload(newUser);
-        const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+        const token = jwtUtils.generateToken(jwtPayload);
 
         console.log(`🎫 JWT token generated for user: ${username}`);
 
@@ -295,7 +290,6 @@ router.post('/sign-up', async (req, res) => {
         console.error('Error name:', error.name);
         console.error('Error message:', error.message);
         console.error('Error stack:', error.stack);
-        console.error('JWT_SECRET configured:', !!JWT_SECRET);
         console.error('=====================================');
 
         // Handle specific error types with appropriate responses
@@ -398,7 +392,7 @@ router.post('/sign-in', async (req, res) => {
 
         // Generate JWT token for successful authentication
         const jwtPayload = createJWTPayload(user);
-        const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+        const token = jwtUtils.generateToken(jwtPayload);
 
         console.log(`✅ Login successful for user: ${username} (${user.role})`);
 
@@ -435,12 +429,18 @@ router.post('/sign-in', async (req, res) => {
 /**
  * POST /auth/login
  * Alternative Login Endpoint (Backward Compatibility)
- * 
+ *
  * @route POST /auth/login
  * @access Public
  * @description
  * Alias for the /auth/sign-in endpoint to maintain backward compatibility
  * with existing client applications or API consumers.
  */
+router.post('/login', (req, res, next) => {
+    // Forward to /auth/sign-in handler
+    req.url = '/sign-in';
+    router.handle(req, res, next);
+});
+
 // Export the router for use in the main application
 module.exports = router;

@@ -48,6 +48,7 @@ const SleepData = require('../models/SleepData'); // User sleep tracking data
 
 // Authentication middleware
 const verifyToken = require('../middleware/verifyToken');   // JWT verification
+const jwtUtils = require('../utils/jwt');
 
 // Apply JWT verification to all routes in this controller
 // This ensures all user operations require authentication
@@ -297,13 +298,23 @@ router.patch('/profile', async (req, res) => {
       });
     }
 
+    // Generate a new JWT reflecting any profile changes
+    const jwtPayload = {
+      _id: updatedUser._id,
+      id: updatedUser._id.toString(),
+      username: updatedUser.username,
+      role: updatedUser.role || 'user'
+    };
+    const token = jwtUtils.generateToken(jwtPayload);
+
     // Log successful update
     console.log(`[USER_PROFILE] Profile updated successfully for user: ${req.user.username}`);
 
     res.status(200).json({
       success: true,
       message: 'Profile updated successfully.',
-      data: updatedUser
+      data: updatedUser,
+      token // New JWT for frontend to use
     });
   } catch (error) {
     // Log detailed error for debugging

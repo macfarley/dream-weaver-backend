@@ -62,6 +62,8 @@ dream-weaver-backend/
 │   └── User.js          # User account model
 ├── scripts/             # Utility scripts
 │   └── seed.js          # Database seeding script
+├── utils/                # Utility modules
+│   └── jwt.js            # Centralized JWT creation/verification
 ├── .env.example         # Environment template
 ├── .gitignore          # Git ignore rules
 ├── package.json        # Dependencies and scripts
@@ -238,6 +240,27 @@ MONGODB_URI=your_db_url      # Database connection string
 
 ---
 
+## 🆕 Changelog
+
+### 2025-06-21
+- Centralized all JWT creation/verification logic in `utils/jwt.js`.
+- Refactored `controllers/auth.js` and `controllers/users.js` to use the new JWT utility.
+- PATCH `/users/profile` now returns a new JWT after profile updates.
+- Updated API docs and endpoint tables to clarify JWT refresh behavior.
+
+---
+
+## 🔐 JWT Utility Module
+
+A new utility module at `utils/jwt.js` centralizes all JWT creation and verification logic. This ensures consistent token handling across authentication and user profile updates (including PATCH `/users/profile`).
+
+- **generateToken(payload, expiresIn?)**: Create a signed JWT for a user or payload.
+- **verifyToken(token)**: Validate and decode a JWT.
+
+This utility is used in both the authentication controller and user profile update endpoint.
+
+---
+
 ## 🧑‍💻 API Endpoints Overview
 
 ### 🔓 **Authentication Routes**
@@ -245,12 +268,13 @@ MONGODB_URI=your_db_url      # Database connection string
 |-------|---------|-------------|---------------|
 | `/auth/sign-up` | POST | Create new user account | No |
 | `/auth/sign-in` | POST | Login user and get JWT token | No |
+| `/auth/login` | POST | Alias for sign-in (backward compatibility) | No |
 
 ### 👤 **User Routes**
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
 | `/users/` | GET | Get user's sleep data (alternative endpoint) | Yes |
-| `/users/profile` | PATCH | Update current user profile (partial) | Yes |
+| `/users/profile` | PATCH | Update current user profile (partial, returns new JWT) | Yes |
 
 ### 🛏️ **Bedroom Routes**
 | Route | Method | Description | Auth Required |
