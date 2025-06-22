@@ -273,8 +273,10 @@ This utility is used in both the authentication controller and user profile upda
 ### 👤 **User Routes**
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
-| `/users/` | GET | Get user's sleep data (alternative endpoint) | Yes |
+| `/users/profile` | GET | Get current user profile (never cached, always fresh) | Yes |
 | `/users/profile` | PATCH | Update current user profile (partial, returns new JWT) | Yes |
+
+> **Note:** `/users/profile` is never cached. The backend sets cache-control headers so you always get a fresh user object in the response.
 
 ### 🛏️ **Bedroom Routes**
 | Route | Method | Description | Auth Required |

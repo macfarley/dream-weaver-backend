@@ -2,37 +2,22 @@
  * =============================================================================
  * USERS CONTROLLER - DreamWeaver Backend
  * =============================================================================
- * 
- * This controller manages user-related operations including profile management,
- * sleep data retrieval, and administrative user management functions.
- * 
- * Key Features:
- * - User profile updates and management
- * - Personal sleep data retrieval
- * - Administrative user management (admin-only)
- * - Role management and user deletion (admin-only)
- * - Comprehensive data cleanup on user deletion
- * 
- * Route Structure:
- * - GET / - Retrieve user's sleep data
- * - PUT /profile - Update user profile
- * - GET /admin/all - List all users (admin-only)
- * - PUT /admin/:userId/role - Change user role (admin-only)  
- * - DELETE /admin/:userId - Delete user (admin-only)
- * 
+ *
+ * This controller manages user profile operations for authenticated users.
+ *
+ * Exposed Endpoints:
+ * - GET /profile   - Returns the full user object for the authenticated user
+ * - PATCH /profile - Updates the authenticated user's profile (partial update, returns new JWT)
+ *
  * Security Considerations:
  * - All routes require valid JWT authentication
- * - Admin routes require additional role verification
- * - Admins cannot modify other admin accounts
- * - Admins cannot delete themselves
  * - Comprehensive input validation and sanitization
- * - Audit logging for administrative actions
- * 
+ * - No admin or user listing functions here (admin-only, handled elsewhere)
+ *
  * Data Relationships:
- * - Links to sleep data, bedrooms, and related user content
- * - Cascade deletion for user-related data
+ * - User profile data only (no sleep data or admin functions)
  * - Privacy protection for sensitive user information
- * 
+ *
  * @author DreamWeaver Development Team
  * @version 1.0.0
  * =============================================================================
@@ -44,7 +29,6 @@ const router = express.Router();
 
 // Data models
 const User = require('../models/User');        // User account management
-const SleepData = require('../models/SleepData'); // User sleep tracking data
 
 // Authentication middleware
 const verifyToken = require('../middleware/verifyToken');   // JWT verification
@@ -56,63 +40,31 @@ router.use(verifyToken);
 
 /**
  * =============================================================================
- * GET /
+ * GET /profile
  * =============================================================================
- * Retrieves all sleep data entries for the authenticated user.
- * 
- * Access Control:
- * - Requires valid JWT token
- * - Users can only access their own sleep data
- * 
- * Response:
- * - Success: Array of sleep data objects with bedroom details
- * - Error: 500 for server errors
- * 
- * Data Included:
- * - Complete sleep session information
- * - Associated bedroom details (name only for privacy)
- * - Wake-up events and quality ratings
- * - Sorted by creation date (most recent first)
- * 
- * Use Cases:
- * - Mobile app sleep history display
- * - User dashboard sleep data overview
- * - Sleep pattern analysis and reporting
+ * Returns the authenticated user's full profile (all fields except password hash).
+ * Requires a valid JWT. Extracts userId from token, finds user by ID, and returns the user object.
  * =============================================================================
  */
-router.get('/', async (req, res) => {
-    try {
-        const userId = req.user.id; // Get user ID from verified JWT token
-        console.log(`[USER_DATA] Fetching sleep data for user: ${req.user.username}`);
+router.get('/profile', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
 
-        // Find all sleep data entries for the authenticated user
-        const sleepEntries = await SleepData.find({ user: userId })
-            .populate('bedroom', 'bedroomName description') // Include bedroom details
-            .populate('user', 'username firstName lastName') // Include basic user info
-            .sort({ createdAt: -1 }); // Sort by most recent first
-
-        // Log successful retrieval
-        console.log(`[USER_DATA] Successfully retrieved ${sleepEntries.length} sleep entries for user: ${req.user.username}`);
-
-        res.status(200).json({
-            success: true,
-            count: sleepEntries.length,
-            data: sleepEntries
-        });
-    } catch (error) {
-        // Log detailed error for debugging
-        console.error('[USER_DATA] Error retrieving sleep data:', {
-            error: error.message,
-            stack: error.stack,
-            username: req.user.username,
-            timestamp: new Date().toISOString()
-        });
-        
-        res.status(500).json({ 
-            success: false,
-            error: 'Failed to retrieve sleep data. Please try again later.' 
-        });
+    const userId = req.user.id;
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
     }
+    // Remove hashedPassword if present
+    delete user.hashedPassword;
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    console.error('[USER_PROFILE] Error fetching profile:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch profile.' });
+  }
 });
 
 /**
@@ -339,29 +291,6 @@ router.patch('/profile', async (req, res) => {
       success: false,
       error: 'Failed to update profile. Please try again later.' 
     });
-  }
-});
-
-/**
- * =============================================================================
- * GET /profile
- * =============================================================================
- * Returns the authenticated user's full profile (excluding password hash).
- * =============================================================================
- */
-router.get('/profile', async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const user = await User.findById(userId).lean();
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'User not found.' });
-    }
-    // Remove hashedPassword if present
-    delete user.hashedPassword;
-    res.status(200).json({ success: true, data: user });
-  } catch (error) {
-    console.error('[USER_PROFILE] Error fetching profile:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch profile.' });
   }
 });
 
