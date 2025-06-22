@@ -344,6 +344,29 @@ router.patch('/profile', async (req, res) => {
 
 /**
  * =============================================================================
+ * GET /profile
+ * =============================================================================
+ * Returns the authenticated user's full profile (excluding password hash).
+ * =============================================================================
+ */
+router.get('/profile', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+    // Remove hashedPassword if present
+    delete user.hashedPassword;
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    console.error('[USER_PROFILE] Error fetching profile:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch profile.' });
+  }
+});
+
+/**
+ * =============================================================================
  * MODULE EXPORTS
  * =============================================================================
  * Export the router for use in the main application.
