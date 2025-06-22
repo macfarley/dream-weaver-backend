@@ -176,13 +176,14 @@ router.get('/users/:id', verifyToken, async (req, res) => {
 
 /**
  * =============================================================================
- * PUT /users/:id
+ * PATCH /users/:id
  * =============================================================================
- * Updates a user's profile information.
+ * Updates a user's profile information (partial update).
  * 
  * Access Control:
  * - Requires valid JWT token
  * - Accessible by: Admin users OR the user themselves (self-update)
+ * - Admins cannot update other admins (only self-update allowed for admins)
  * 
  * Parameters:
  * - id: MongoDB ObjectId of the target user
@@ -210,7 +211,7 @@ router.get('/users/:id', verifyToken, async (req, res) => {
  * - Role and username changes are explicitly blocked
  * =============================================================================
  */
-router.put('/users/:id', verifyToken, async (req, res) => {
+router.patch('/users/:id', verifyToken, async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -232,6 +233,24 @@ router.put('/users/:id', verifyToken, async (req, res) => {
       return res.status(403).json({ 
         success: false,
         error: 'Access denied. You can only update your own profile.' 
+      });
+    }
+
+    // Find the target user
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found.' 
+      });
+    }
+
+    // Prevent updating other admin users (security measure)
+    if (targetUser.role === 'admin' && !isSelf) {
+      console.warn(`[SECURITY] Admin ${req.user.username} attempted to update another admin: ${targetUser.username}`);
+      return res.status(403).json({
+        success: false,
+        error: 'Cannot update other admin users. Only users with role "user" can be updated by admins.'
       });
     }
 
