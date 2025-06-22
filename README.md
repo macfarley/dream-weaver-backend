@@ -307,9 +307,16 @@ This utility is used in both the authentication controller and user profile upda
 | Route | Method | Description | Auth Required |
 |-------|---------|-------------|---------------|
 | `/admin/users` | GET | List all users | Admin only |
-| `/admin/users/:id` | GET | Get specific user details | Admin only |
-| `/admin/users/:id` | PUT | Update user (except role/username) | Admin only |
-| `/admin/users/:id` | DELETE | Delete user (requires admin password) | Admin only |
+| `/admin/users/:id` | GET | Get specific user details (admin or self) | Admin only |
+| `/admin/users/:id` | PATCH | Partially update user (admin can update users, but cannot update other admins; admins can only self-update if target is admin). Username and role cannot be changed. Email must be unique. | Admin only |
+| `/admin/users/:id` | DELETE | Delete user (admin only; requires admin password confirmation in `x-admin-password` header or body). Cannot delete other admins or self. Cascade deletes all user data (bedrooms, sleep data, etc). | Admin only |
+
+> **Security Notes:**
+> - All admin endpoints require valid JWT and admin role.
+> - Admins cannot update or delete other admins (only self-update/delete allowed for admins).
+> - Deletion requires admin password confirmation and performs full cascade deletion of user data.
+> - All sensitive fields (password, role, username) are protected from unauthorized changes.
+> - All actions are logged for audit purposes.
 
 ---
 
