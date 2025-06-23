@@ -265,7 +265,7 @@ router.patch('/profile', async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Profile updated successfully.',
-      data: updatedUser,
+      user: updatedUser, // Changed from 'data' to 'user' for frontend compatibility
       token // New JWT for frontend to use
     });
   } catch (error) {
