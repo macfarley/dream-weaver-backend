@@ -1,12 +1,18 @@
 # 🌙 DreamWeaver Backend 😴
 
-![DreamWeaver Logo](./public/logo.png)
+[![Live Server](https://img.shields.io/badge/Live%20Server-Online-brightgreen)](https://dream-weaver-backend-8bb0ae2b1a97.herokuapp.com/)
+
+Backend server now live: [https://dream-weaver-backend-8bb0ae2b1a97.herokuapp.com/](https://dream-weaver-backend-8bb0ae2b1a97.herokuapp.com/)
+
+[View Resume (Markdown)](./public/resume.md)
+
+![DreamWeaver Logo](./public/DW-Logo.png)
 
 > *Sleep data storage and API for DreamWeaver frontend.*
 
 ---
 
-![Screenshot of API in action](./public/screenshot.png)
+![Screenshot of API in action](./public/DW-Live-Screenshot-2025-06-23.png)
 
 ---
 
